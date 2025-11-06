@@ -1,0 +1,446 @@
+---
+title: "lib_design"
+author: "Sunay"
+date: "2023-06-11"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(reshape2)
+library(ggpubr)
+library(ggsci)
+library(here)
+set.seed(125)
+```
+
+# exploring data
+
+```{r}
+# read in the most update arranged data from data carpentery folder
+all_data <- read_csv(file="sym_101_design/Cleaned_up_data/all_melted_data2025-05-07.csv")
+all_data %>% filter(func %in% c("CEG", "NEG")) %>% filter(Data=="Crs") %>% ggplot(aes(x=value, linetype=func,color=StrippedCellLineName))+geom_density()+facet_wrap(~model_type)
+
+```
+
+```{r}
+all_data_target<-read_csv("sym_101_design/Cleaned_up_data/all_data_target_2025-05-07.csv")
+  
+
+summary(all_data_target)
+all_data_target<- na.omit(all_data_target)
+cormat<- round(cor(all_data_target[,2:13], method = "pearson"),2)
+melted_cormat <- melt(cormat)
+head(melted_cormat)
+ggplot(data = melted_cormat, aes(x=Var1, y=Var2, fill=value)) + 
+  geom_tile() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + ggtitle("Selected Lines Data Correlations")+geom_text(aes(label = value), color="white")
+ggsave(filename = paste0("../graphs/all_data_correlation_plot_", Sys.Date(),".svg"), dpi = 1000, width = 25, height = 15, units = "cm")
+
+```
+
+between all three line gene expression and Crispr scores are highly correlated. for each line gene expression is negatively correlated with Crispr score. the more genes are expressed the lower the crispr LFC
+
+```{r}
+plot_1<-ggplot()+
+  geom_point(data= (all_data_target %>% filter(func=="Other")), aes(x=A549_Exp, y=A549_Crs, color=func), size=0.5, alpha=0.5)+
+ geom_point(data= (all_data_target %>% filter(func!="Other")), aes(x=A549_Exp, y=A549_Crs, color=func), size=1)+scale_color_nejm(name="Gene Function")+ggtitle("A549")+theme_bw()+stat_cor(data=all_data_target,aes(x=A549_Exp, y=A549_Crs ,label = ..r.label..))+theme(axis.title = element_blank())
+
+
+Plot_2<-ggplot()+
+  geom_point(data= (all_data_target %>% filter(func=="Other")), aes(x=NCIH1299_Exp, y=NCIH1299_Crs, color=func), size=0.5, alpha=0.5)+
+ geom_point(data= (all_data_target %>% filter(func!="Other")), aes(x=NCIH1299_Exp, y=NCIH1299_Crs, color=func), size=1)+scale_color_nejm(name="Gene Function")+ggtitle("NCIH1299")+theme_bw()+stat_cor(data=all_data_target,aes(x=NCIH1299_Exp, y=NCIH1299_Crs,label = ..r.label.. ))+theme(axis.title = element_blank())
+
+
+Plot_3<-ggplot()+
+  geom_point(data= (all_data_target %>% filter(func=="Other")), aes(x=NCIH1975_Exp, y=NCIH1975_Crs, color=func), size=0.5, alpha=0.5)+
+ geom_point(data= (all_data_target %>% filter(func!="Other")), aes(x=NCIH1975_Exp, y=NCIH1975_Crs, color=func), size=1)+scale_color_nejm(name="Gene Function")+ggtitle("NCIH1975")+theme_bw()+stat_cor(data=all_data_target,aes(x=NCIH1975_Exp, y=NCIH1975_Crs,label = ..r.label.. ))+theme(axis.title = element_blank())
+
+ggarrange(plot_1, Plot_2, Plot_3, ncol=3, common.legend = T) %>% annotate_figure(bottom = "Log2(TPM+1)", left = "Crispr Score")
+ggsave(filename = paste0("sym_101_design/graphs/three_lines_CRISPR_vs_expression_", Sys.Date(),".svg"), dpi = 1000, width = 25, height = 15, units = "cm")
+```
+
+since crispr and expression data is highly correlated in all three lines, I will use their mean.
+
+```{r}
+all_data_target$Mean_exp<- rowMeans(all_data_target %>% select(contains("Exp")))
+all_data_target$Mean_crs<- rowMeans(all_data_target %>% select(contains("Crs")))
+```
+
+```{r}
+working_data<- all_data_target %>%  select(Gene,func, Mean_exp, Mean_crs, contains("Copy"))
+summary(working_data$Mean_exp)
+low_exp<- working_data %>% filter(Mean_exp< 0.27) %>% droplevels()## 0.27 is the cut-off of lower quantile of the expression.
+table(low_exp$func)
+table(working_data$func)
+print(paste("there are", nrow(low_exp),"genes with very low expression"))
+```
+
+majority of non-essential genes have very low expression (742 out of 762).
+
+```{r}
+working_data %>% ggplot(aes(y=Mean_exp, color=func))+geom_boxplot()
+working_data %>% ggplot(aes(x=Mean_exp))+geom_density()+geom_vline(xintercept =0.5)
+```
+
+# selecting genes according to expression:
+
+in the target library we aim to have genes with various expression levels and various CRISPR scores.
+
+for further analysis I will focus on genes with expression above the first quantile I will try two binning strategy.
+
+## 1: binning genes according to gene number, i.e. 500 genes in each bin.
+
+```{r}
+###remove very low reads
+exp_working_data<- working_data %>% filter(Mean_exp > 0.5)
+
+### add bins
+exp_working_data$rank_exp<- as.integer(rank(exp_working_data$Mean_exp))
+
+exp_working_data$exp_bin<-data.frame(exp_bin=cut(exp_working_data$rank_exp, seq(from=0, to=13001, by=500), include.lowest = T))
+exp_working_data<- do.call(data.frame, exp_working_data)
+
+
+
+exp_working_data %>% ggplot(aes(y=Mean_exp, x=exp_bin))+geom_boxplot()+geom_violin()+theme(axis.text.x = element_text(angle=90))+xlab("expression rank bin")+ylab("Mean Expression in three lines")
+
+exp_working_data %>% ggplot(aes(y=Mean_crs, x=exp_bin))+geom_boxplot()+geom_violin()+theme(axis.text.x = element_text(angle=90))+xlab("expression rank bin")+ylab("Mean CRISPR Score in three lines")+stat_compare_means(ref.group = "[0,500]", label = "p.signif", method = "t.test" )
+
+
+
+all_data_filtered<- all_data %>% filter(Data=="Exp") %>% filter(StrippedCellLineName %in% c("A549", "NCIH1299","NCIH1975")) %>% filter(value> 0.5) %>% group_by(ModelID) %>% mutate(exp_rank=rank(value))
+
+all_data_filtered$exp_bin<-data.frame(exp_bin=cut(all_data_filtered$exp_rank, seq(from=0, to=15001, by=500), include.lowest = T))
+all_data_filtered<-do.call(data.frame,all_data_filtered)
+all_data_filtered %>% ggplot(aes(y=value, x=exp_bin, color=StrippedCellLineName))+geom_boxplot()+geom_violin()+theme(axis.text.x = element_text(angle=90))+xlab("expression rank bin")+ylab("Mean Expression in three lines")+scale_color_nejm(name="Target Cell Line")
+```
+
+for the first 3500 genes (after low expression removed) crispr score is similar and low.
+
+## 2: binning genes according to expression levels, i.e. in 1 log2(TPM) increments
+
+```{r}
+working_data$exp_bin<-data.frame(exp_bin=cut(working_data$Mean_exp, seq(from=0, to=13, by=1), include.lowest = T))
+working_data<- do.call(data.frame, working_data)
+
+
+working_data %>% ggplot(aes(y=Mean_exp, x=exp_bin))+geom_boxplot()+geom_violin()+theme_bw()+theme(axis.text.x = element_text(angle=90))+xlab("expression bin")+ylab("Mean Expression in three lines")+geom_violin(fill="yellow", alpha=0.3)
+
+genes_in_each_bin<-as.data.frame(table(working_data$exp_bin, working_data$func)) %>% filter(Freq!=0) %>% arrange(Var1)
+names(genes_in_each_bin)<- c("Bin","func", "number of genes")
+genes_in_each_bin
+```
+
+non essential genes are accumulated in low expression bins.
+
+```{r}
+working_data %>% ggplot(aes(y=Mean_crs, x=exp_bin))+geom_boxplot()+geom_violin()+theme(axis.text.x = element_text(angle=90))+xlab("expression bin")+ylab("Mean CRISPR Score in three lines")+stat_compare_means(ref.group = "[0,1]", label = "p.signif", method = "t.test" )+annotate("text",
+           x = 1:length(table(working_data$exp_bin)),
+           y = aggregate(Mean_crs ~ exp_bin, working_data, median)[ , 2],
+           label = table(working_data$exp_bin),
+           col = "red",
+           vjust = -3)+ ylim(-6,3)
+
+
+working_data %>% ggplot(aes(y=Mean_crs, x=exp_bin, color=func))+geom_boxplot()+geom_violin()+theme_bw()+theme(axis.text.x = element_text(angle=90))+xlab("expression bin")+ylab("Mean CRISPR Score in three lines")+stat_compare_means(ref.group = "[0,1]", label = "p.signif", method = "t.test" )+annotate("text",
+           x = 1:length(table(working_data$exp_bin)),
+           y = 0,
+           label = table(working_data$exp_bin),
+           col = "purple",
+           vjust = -3)+ ylim(-6,3)+ geom_text(aes(label="# of genes\nin each bin", x=12, y=3), color="purple", inherit.aes = F)+scale_color_nejm(name="Gene Function")
+```
+
+Crispr effect is observed after 1 log2(TPM+1)
+
+```{r}
+
+all_data_binned_exp<- all_data%>% filter(Data=="Exp") %>% filter(StrippedCellLineName %in% c("A549", "NCIH1299","NCIH1975")) %>% group_by(ModelID) %>% mutate(exp_bin=data.frame(exp_bin=cut(value, seq(from=0, to=14, by=1), include.lowest = T)))%>% select(Gene, StrippedCellLineName, value, exp_bin)
+all_data_binned_exp<-do.call(data.frame,all_data_binned_exp)
+all_data_binned_exp %>% ggplot(aes(y=value, x=exp_bin, color=StrippedCellLineName))+geom_boxplot()+theme(axis.text.x = element_text(angle=90))+xlab("expression bin")+ylab("Mean Expression in three lines")+scale_color_nejm(name="Target Cell Line")
+
+all_data_binned_crs<- all_data%>% filter(Data=="Crs") %>% filter(StrippedCellLineName %in% c("A549", "NCIH1299","NCIH1975")) %>% select(Gene, func, StrippedCellLineName, Crispr=value)
+
+
+length(unique(all_data_binned_exp$Gene))
+
+
+
+all_data_binned<- inner_join(all_data_binned_exp,all_data_binned_crs, by=c("Gene","StrippedCellLineName"))
+
+names(all_data_binned)
+
+
+all_data_binned %>% ggplot(aes(y=Crispr, x=exp_bin, color=StrippedCellLineName))+geom_boxplot()+
+  theme_bw()+theme(axis.text.x = element_text(angle=90))+xlab("expression bin")+ylab("crispr score ")+scale_color_nejm(name="Target Cell Line")+annotate("text",
+           x = 1:14,
+           y = 0,
+           label = table(all_data_binned$exp_bin),
+           col = "purple",
+           vjust = -3)+ ylim(-6,3)+ geom_text(aes(label="# of genes\nin each bin", x=12, y=3), color="purple", inherit.aes = F)
+
+ggsave(filename = paste0("sym_101_design/graphs/binned_data_exp_vs_crs_", Sys.Date(),".svg"), dpi = 1000, width = 25, height = 15, units = "cm")
+
+
+
+
+```
+
+# selecting target genes
+
+binning genes according to expression levels produced more homogenous results between cell lines. I will stick to this method. I'll label genes as depleted according to mean Crispr score \<-1 (to be strict about depleted genes)
+
+```{r}
+working_data<- working_data %>% mutate(depleted=case_when(
+  Mean_crs <= -1 ~"Depleted",
+  Mean_crs >-1 ~ "Non_depleted"
+))
+
+working_data %>% ggplot(aes(y=Mean_crs, x=depleted))+geom_boxplot()+annotate("text",
+           x = 1:2,
+           y = 0,
+           label = table(working_data$depleted),
+           col = "purple",
+           vjust = -6)+ ylim(-6,3)+ geom_text(aes(label="# of genes\nin each group", x=2, y=3), color="purple", inherit.aes = F)+theme_bw()+ylab("Mean CRISPR Score")
+sum(is.na(working_data$depleted))
+
+
+```
+
+```{r}
+working_data$exp_bin_2<-data.frame(exp_bin_2=cut(working_data$Mean_exp, seq(from=0, to=13, by=2), include.lowest = T))
+working_data<- do.call(data.frame, working_data)
+n<-as.data.frame(table(working_data$depleted, working_data$exp_bin_2)) %>% filter(Freq!=0)
+n
+
+working_data %>% ggplot(aes(y=Mean_crs, x=exp_bin_2))+geom_boxplot()
+
+```
+
+bins of 2 log2(TPM)is easier to randomly select n number of genes in each group
+
+select all depleted genes with mean expression \<2 log2(TPM) and randomly select 30 genes from each other bin. randomly select 30 genes from each other bin for non-depleted genes.
+
+```{r}
+selected_genes<- working_data %>%  group_by(exp_bin_2, depleted) %>% slice_sample(n=30)## sample_n requires defined number of observation in each bin, slice_sample retrieves all the observations in each bin if they are less then defined number.
+
+selected_genes %>% ggplot(aes(x=Mean_exp, y=Mean_crs, color=func))+geom_point()
+table(working_data$depleted, working_data$func)
+```
+
+131 core essential genes are not depleted. core essential and other genes are randomly selected in each group- but I would like to have more core essential genes, especially non-depleted ones. I will try with a granular depletion score
+
+```{r}
+working_data %>% ggplot(aes(y=Mean_crs, color=func))+geom_boxplot()
+working_data %>% ggplot(aes(y=Mean_crs, x= depleted,color=func))+geom_boxplot()
+
+working_data<- working_data %>% mutate(depleted_fine=case_when(
+  Mean_crs <= -1 ~"Depleted",
+  Mean_crs>-1 & Mean_crs <=-0.5 ~"intermediate",
+  Mean_crs >-0.5 ~ "Non_depleted"
+))
+
+sum(is.na(working_data$depleted_fine))
+
+fine_selected<- working_data %>% group_by(exp_bin_2, depleted_fine,func) %>% slice_sample(n=20) 
+
+as.data.frame(table(fine_selected$exp_bin_2, fine_selected$depleted_fine, fine_selected$func)) %>% filter(Freq!=0)
+
+fine_selected %>% ggplot(aes(x=Mean_exp, y=Mean_crs, color=func))+geom_point()
+
+```
+
+here we have better representation of all expression and essentiality levels
+
+# add copy number
+
+```{r}
+library(ggrepel)
+copy_vs_exp_plot_A549<-all_data_target %>% ggplot(aes(x=A549_Exp, y=A549_Copy))+geom_point()+stat_cor()+theme_bw()+geom_label_repel(data = (all_data_target %>%filter(Gene=="MYC")), aes(x=A549_Exp, y=A549_Copy, label=Gene), inherit.aes = F)
+
+
+copy_vs_exp_plot_H1299<- all_data_target %>% ggplot(aes(x=NCIH1299_Exp, y=NCIH1299_Copy))+geom_point()+stat_cor()+theme_bw()+geom_label_repel(data = (all_data_target %>%filter(Gene=="MYC")), aes(x=NCIH1299_Exp, y=NCIH1299_Copy, label=Gene), inherit.aes = F)
+copy_vs_exp_plot_H1975<- all_data_target %>% ggplot(aes(x=NCIH1975_Exp, y=NCIH1975_Copy))+geom_point()+stat_cor()+geom_label_repel(data = (all_data_target %>%filter(Gene=="MYC")), aes(x=NCIH1975_Exp, y=NCIH1975_Copy, label=Gene), inherit.aes = F)+theme_bw()
+
+ggsave(copy_vs_exp_plot_A549, file="sym_101_design/graphs/copy_vs_exp_plot_A549.jpg")
+ggsave(copy_vs_exp_plot_H1299, file="sym_101_design/graphs/copy_vs_exp_plot_H1299.jpg")
+ggsave(copy_vs_exp_plot_H1975, file="sym_101_design/graphs/copy_vs_exp_plot_H1975.jpg")
+
+all_data_selected<- all_data %>% filter(StrippedCellLineName %in% c("A549", "NCIH1299", "NCIH1975")) %>% filter(Gene %in% fine_selected$Gene)
+q1<- all_data_selected %>% filter(Data=="Copy") %>% ggplot(aes(y=value, x=StrippedCellLineName))+geom_boxplot()+ggtitle("selected genes")
+q2<- all_data %>% filter(StrippedCellLineName %in% c("A549", "NCIH1299", "NCIH1975")) %>% filter(Data=="Copy") %>% ggplot(aes(y=value, x=StrippedCellLineName))+geom_boxplot()+ggtitle("all genes")
+ggarrange(q1,q2)
+
+```
+
+generally low copy number genes are selected. I will manually select and add low and high copy number genes also
+
+```{r}
+all_data_target_copy<- all_data %>% filter(StrippedCellLineName %in% c("A549", "NCIH1299", "NCIH1975")) %>% filter(Data=="Copy") %>% droplevels()
+
+
+m<- all_data_target_copy %>% filter(value <=0.5 | value >=log2(3)) %>% droplevels()
+print(paste("there are",length(unique(m$Gene)), "genes with either low or high copy number in at least one of the cells, which is too much"))
+table(table(m$Gene))
+```
+
+53 genes have aberrant copy number in all three lines. I'll add them to the list of target genes:
+
+```{r}
+all_data_target_copy %>% filter(Gene %in% m$Gene) %>% ggplot( aes(x =StrippedCellLineName, y = value
+         )) +geom_boxplot(aes(fill = StrippedCellLineName))+geom_line(aes(group=Gene), color="gray")+geom_point()+theme_bw()
+
+
+
+aberrant_genes<- as.data.frame(table(m$Gene)) %>% filter(Freq==3) %>% droplevels()
+aberrant_genes_working_data<- working_data %>% filter(Gene %in% aberrant_genes$Var1) %>% droplevels()
+fine_selected_copy<-rbind(fine_selected, aberrant_genes_working_data) %>% unique()
+sum(duplicated(fine_selected_copy$Gene))
+
+```
+
+```{r}
+q3<- all_data %>%filter(StrippedCellLineName %in% c("A549", "NCIH1299", "NCIH1975")) %>%  filter(Data=="Copy") %>% filter(Gene%in%fine_selected_copy$Gene) %>%  ggplot(aes(y=value, x=StrippedCellLineName))+geom_boxplot()+ggtitle("selected genes")
+q4<- all_data %>% filter(StrippedCellLineName %in% c("A549", "NCIH1299", "NCIH1975")) %>% filter(Data=="Copy") %>% ggplot(aes(y=value, x=StrippedCellLineName))+geom_boxplot()+ggtitle("all genes")
+ggarrange(q3,q4)
+```
+
+```{r}
+
+summary(m$value)
+
+m$copy_bin<- data.frame(copy_bin=cut(m$value, seq(from=0, to=6, by=1), include.lowest = T))
+m<-do.call(data.frame,m)
+table(m$copy_bin)
+
+x<- m %>% group_by(copy_bin) %>% slice_sample(n=30)
+
+aberrant_genes_working_data<- working_data %>% filter(Gene %in% x$Gene) %>% droplevels()
+fine_selected_copy<-rbind(fine_selected, aberrant_genes_working_data) %>% unique()
+sum(duplicated(fine_selected_copy$Gene))
+
+q5<- all_data_target_copy %>% filter(Gene%in%fine_selected_copy$Gene) %>%  ggplot(aes(y=value, x=StrippedCellLineName))+geom_boxplot()+ggtitle("selected genes")
+q6<- all_data_target_copy %>% ggplot(aes(y=value, x=StrippedCellLineName))+geom_boxplot()+ggtitle("all genes")
+ggarrange(q5,q6)
+
+
+
+
+```
+
+# Cancer relevant Genes: 
+
+I will also add NPM1 gene as Kostas requested, and following genes I gathered from project proposal, asking Adi and from this paper: <https://www.nature.com/articles/d42473-020-00479-0# 
+also added RNA modifying genes Kostas suggestd (BRD4, BCL2, MCL1, PABPN1, METTL16, METTL3, METTL14, METTL1, NCL,)
+
+```{r}
+cancer_genes<- c("APC",
+"ATR",
+"CDKN2A",
+"CUL3",
+"EGFR",
+"KMT2D",
+"KRAS",
+"MLH3",
+"NF1",
+"NFE2L2",
+"NRAS",
+"PIK3CA",
+"SMARCA4",
+"STK11",
+"TET2",
+"U2AF1",
+"ALK", 
+"ROS1", 
+"BRAF", 
+"NTRK1",
+"NTRK2",
+"NTRK3",
+"MET", 
+"RET",
+"ERBB2",
+"BAP1",
+"FGFR1",
+"FGFR2",
+"HRAS",
+"MAP2K1",
+"NPM1",
+"BRD4", "BCL2", "MCL1", "PABPN1", "METTL16", "METTL3", "METTL14", "METTL1", "NCL")
+cancer_genes<- unique(cancer_genes)
+
+
+cancer_data<- working_data %>% filter(Gene %in% cancer_genes) %>% droplevels()
+final_gene_list<- rbind(fine_selected_copy[,1:7], cancer_data[,1:7])
+final_gene_list_all_data<- all_data_target %>% filter(Gene %in% final_gene_list$Gene) %>% droplevels()
+
+final_gene_list_all_data<- final_gene_list_all_data %>% mutate(cancer_relevant="no") %>% mutate(cancer_relevant=case_when(
+  Gene %in% cancer_genes ~ "yes",
+  is.na(cancer_relevant) ~ "No",
+  TRUE ~ as.character(cancer_relevant)))
+final_gene_list_all_data<- do.call("data.frame",final_gene_list_all_data)
+
+
+
+write_csv(final_gene_list_all_data, file=paste0("sym_101_design/output/final_gene_list_", Sys.Date(),".csv"))
+
+```
+
+```{r}
+print(paste("there are", nrow(final_gene_list_all_data), "genes in the final list"))
+```
+
+```{r}
+final_gene_list_all_data %>% ggplot(aes(x=Mean_exp, y=Mean_crs, color=func))+geom_point()+
+  theme_bw()+
+  ggtitle("Single Guide Library Essentiality vs Expression\nSelected Protein Coding Genes")+
+  xlab("DepMap Expression\nLog2(TPM+1)")+
+  ylab("DepMap CRISPR Score")+
+  scale_color_manual(name="Gene Function", labels=c("CEG"="Core Essential Genes", "NEG"="non-essential Genes", "Other"="Other Genes"),  values=c("CEG"="#F72735", "NEG"="#264DFF", "Other"="#FFAD72"))
+
+ggsave(filename = paste0("sym_101_design/graphs/final_selected_proteinCoding_crs_vs_exp", Sys.Date(),".svg"), dpi = 1000, width = 25, height = 15, units = "cm")
+
+```
+
+# final sanity checks
+
+```{r}
+final_gene_list_all_data_long<- all_data %>% filter(StrippedCellLineName %in% c("A549", "NCIH1299", "NCIH1975")) %>% filter(Gene %in% final_gene_list_all_data$Gene) %>% droplevels() 
+
+t1<-final_gene_list_all_data_long %>% filter(Data=="Crs") %>% ggplot(aes(y=value, x=StrippedCellLineName))+geom_boxplot()+ylim(-5,3)+theme_bw()+theme(axis.title = element_blank())+
+geom_text(inherit.aes = FALSE, aes(x=2, y=2.5,label="Selected Genes"), size=14, size.unit = "pt")
+
+
+t2<-all_data %>%  filter(StrippedCellLineName %in% c("A549", "NCIH1299", "NCIH1975")) %>% filter(Data=="Crs") %>% ggplot(aes(y=value, x=StrippedCellLineName))+geom_boxplot()+ylim(-5,3)+theme_bw()+theme(axis.title = element_blank())+
+  geom_text(inherit.aes = FALSE, aes(x=2, y=2.5,label="All Genes"), size=14, size.unit = "pt")
+  
+ggarrange(t1,t2 ) %>% annotate_figure(left="CRISPR Score", bottom =  "Selected Cell Lines", top="Selected Lines CRISPR Score")
+
+ggsave(filename = paste0("sym_101_design/graphs/Selected_lines_CRISPR_finalGenes_vs_allGenes", Sys.Date(),".svg"), dpi = 1000, width = 25, height = 15, units = "cm")
+
+```
+
+```{r}
+t3<-final_gene_list_all_data_long %>% filter(Data=="Exp") %>% ggplot(aes(y=value, x=StrippedCellLineName))+geom_boxplot()+theme_bw()+theme(axis.title = element_blank())+
+geom_text(inherit.aes = FALSE, aes(x=2, y=17,label="Selected Genes"), size=14, size.unit = "pt")+
+  ylim(0,18)
+
+t4<-all_data %>%  filter(StrippedCellLineName %in% c("A549", "NCIH1299", "NCIH1975")) %>% filter(Data=="Exp") %>% ggplot(aes(y=value, x=StrippedCellLineName))+geom_boxplot()+theme_bw()+theme(axis.title = element_blank())+
+geom_text(inherit.aes = FALSE, aes(x=2, y=17,label="All Genes"), size=14, size.unit = "pt")+
+  ylim(0,18)
+
+ggarrange(t3,t4 ) %>% annotate_figure(left="Gene Expression\nLog2(TPM+1)", bottom =  "Selected Cell Lines", top="Selected Lines Gene Expression")
+
+
+ggsave(filename = paste0("sym_101_design/graphs/Selected_lines_EXP_finalGenes_vs_allGenes", Sys.Date(),".svg"), dpi = 1000, width = 25, height = 15, units = "cm")
+```
+##End of Analysis
+```{r}
+sessionInfo()
+```
+
+

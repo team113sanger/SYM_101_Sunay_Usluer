@@ -1,0 +1,40 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+```{r}
+length(intersect(symp_101_final_oligo_design$GuideSeq, syp_101_final_selected_gRNAs_with_control$GuideSeq))
+
+syp_101_final_selected_gRNAs_with_control$unique_guide_name<- paste(syp_101_final_selected_gRNAs_with_control$Gene, syp_101_final_selected_gRNAs_with_control$Transcript_ID, syp_101_final_selected_gRNAs_with_control$MatchPos, sep = "_")
+length(unique(syp_101_final_selected_gRNAs_with_control$unique_guide_name))
+
+syp_101_final_selected_gRNAs_with_control <- syp_101_final_selected_gRNAs_with_control %>%
+  group_by(GuideSeq) %>%
+  mutate(gRNA_occurence = n()) %>% ungroup()
+
+syp_101_final_selected_gRNAs_with_control <- syp_101_final_selected_gRNAs_with_control %>%
+  group_by(Gene) %>%
+  mutate(transcript_per_gene = n_distinct(Transcript_ID)) %>% ungroup()
+
+write_csv(syp_101_final_selected_gRNAs_with_control, file = "Final_reference_data/all_gRNA_data.csv")
+map_file<- syp_101_final_selected_gRNAs_with_control %>% select(sgrna_ids=unique_guide_name,  	sgrna_seqs=GuideSeq)
+
+map_file$id<- seq(0:(nrow(map_file)-1))
+map_file$gene_pair_id<- "None"
+
+map_file<- map_file %>% select(3,1,2,4)
+
+write_tsv(map_file, file = "Final_reference_data/sym_101_map_file.tsv")
+
+```
+
+
+```{r}
+sessionInfo()
+```
+

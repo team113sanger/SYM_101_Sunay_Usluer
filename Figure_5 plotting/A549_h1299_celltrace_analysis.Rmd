@@ -1,0 +1,128 @@
+---
+title: "A549_h1299_cell_trace_analysis"
+output: html_notebook
+---
+
+
+
+```{r}
+library(tidyverse)
+library(readxl)
+```
+
+
+
+```{r}
+# Summarize data: calculate mean and sd per gRNA and cell line
+
+A549_h1299_celltrace_exp_1 <- read_excel("data/A549_h1299_celltrace_exp_1.xlsx")
+replicate_number<- A549_h1299_celltrace_exp_1 %>% group_by(Cell_line, gRNA) %>% summarise(count=n())
+
+NT_mean<- A549_h1299_celltrace_exp_1 %>% filter(gRNA =="NT") %>% group_by(Cell_line) %>% summarise(NT_mean=mean(median_celltrace_in_GFP_poz_Cells)) %>% ungroup()
+
+A549_h1299_celltrace_exp_1<- left_join(A549_h1299_celltrace_exp_1, NT_mean, by="Cell_line")
+A549_h1299_celltrace_exp_1<- A549_h1299_celltrace_exp_1 %>% mutate(ratio_to_NT=(median_celltrace_in_GFP_poz_Cells/NT_mean))
+
+summary_df <- A549_h1299_celltrace_exp_1 %>%
+  group_by(gRNA, Cell_line) %>%
+  summarise(mean_expr = mean(ratio_to_NT),
+            sd_expr = sd(ratio_to_NT),
+            .groups = 'drop')
+
+custom_order <- c("NT", "SNHG15_G2", "SNHG15_G3","SNHG16_G1", "SNHG16_G2", "MYC_G2", "MYC_G3")
+
+A549_h1299_celltrace_exp_1$gRNA <- factor(A549_h1299_celltrace_exp_1$gRNA, levels = custom_order)
+summary_df$gRNA <- factor(summary_df$gRNA, levels = custom_order)
+
+
+
+
+h1299_celltrace_exp_1<- A549_h1299_celltrace_exp_1 %>% filter(Cell_line=="NCIH1299") %>% droplevels()
+
+A549_celltrace_exp_1<- A549_h1299_celltrace_exp_1 %>% filter(Cell_line=="A549") %>% droplevels()
+
+```
+
+```{r}
+library(ggpubr)
+library(rstatix)
+
+stat.test_1 <- h1299_celltrace_exp_1 %>%
+  wilcox_test(ratio_to_NT ~ gRNA, ref.group = "NT") %>%
+  adjust_pvalue(method = "bonferroni") %>%
+  add_significance("p.adj")
+
+stat.test_1 <- stat.test_1 %>%
+  mutate(p.adj.signif = case_when(
+    p.adj < 0.001 ~ "***",
+    p.adj < 0.01  ~ "**",
+    p.adj < 0.05  ~ "*",
+    TRUE          ~ "ns"
+  ))
+
+H1299_Cell_trace<-ggplot() +
+  geom_bar(data = summary_df %>% filter(Cell_line=="NCIH1299"),
+           aes(x = gRNA, y = mean_expr),
+           stat = "identity",fill="lightgray", width = 0.7, color="black") +
+  geom_errorbar(data = summary_df %>% filter(Cell_line=="NCIH1299"),
+                aes(x = gRNA, ymin = mean_expr - sd_expr, ymax = mean_expr + sd_expr),
+                width = 0.5, size = 1, color="#333333") +
+  geom_point(data=h1299_celltrace_exp_1, aes(x = gRNA, y=ratio_to_NT),size=2, color="black", alpha=0.8, position = position_jitter(width = 0.15, height = 0)
+  ) +
+  stat_pvalue_manual(
+    stat.test_1,
+    y.position = 5,
+    step.increase = 0.1,
+    label = "p.adj.signif"     # <-- shows *, **, ***
+  )+
+  theme_classic()+theme(axis.title.x = element_blank(), axis.text.x=element_text(angle=45))+
+   ylab("CellTrace Flurescence Signal\nRatio to NT gRNA")+
+  ggtitle("Cell Division Analysis\nNCI-H1299") 
+  
+  H1299_Cell_trace
+
+```
+
+```{r}
+stat.test_2 <- A549_celltrace_exp_1 %>%
+  wilcox_test(ratio_to_NT ~ gRNA, ref.group = "NT") %>%
+  adjust_pvalue(method = "bonferroni") %>%   # or "fdr"
+  add_significance("p.adj")
+
+stat.test_2 <- stat.test_2 %>%
+  mutate(p.adj.signif = case_when(
+    p.adj < 0.001 ~ "***",
+    p.adj < 0.01  ~ "**",
+    p.adj < 0.05  ~ "*",
+    TRUE          ~ "ns"
+  ))
+
+A549_cell_trace<- ggplot() +
+  geom_bar(data = summary_df %>% filter(Cell_line=="A549"),
+           aes(x = gRNA, y = mean_expr),
+           stat = "identity",fill="lightgray", width = 0.7, color="black") +
+  geom_errorbar(data = summary_df %>% filter(Cell_line=="A549"),
+                aes(x = gRNA, ymin = mean_expr - sd_expr, ymax = mean_expr + sd_expr),
+                width = 0.5, size = 1, color="#333333") +
+  geom_point(data=A549_celltrace_exp_1, aes(x = gRNA, y=ratio_to_NT),size=2, color="black", alpha=0.8, position = position_jitter(width = 0.15, height = 0)
+  )+
+  stat_pvalue_manual(
+    stat.test_2,
+    y.position = 5,
+    step.increase = 0.1,
+    label = "p.adj.signif"     # <-- shows *, **, ***
+  )+
+  theme_classic()+theme(axis.title.x = element_blank(), axis.text.x=element_text(angle=45))+
+   ylab("CellTrace Flurescence Signal\nRatio to NT gRNA")+
+  ggtitle("Cell Division Analysis\nA549") 
+  
+ A549_cell_trace 
+
+```
+
+```{r}
+ggsave(H1299_Cell_trace, filename = "H1299_cell_trace.svg", unit="cm", height = 10, width = 15, dpi=1000)
+ggsave(A549_cell_trace, filename = "A549_cell_trace.svg", unit="cm", height = 10, width = 15, dpi=1000)
+
+```
+

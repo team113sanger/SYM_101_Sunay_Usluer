@@ -1,0 +1,127 @@
+---
+title: "trasncriptome analysis"
+author: "Sunay"
+date: "2023-06-16"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+set.seed(87532)
+```
+RNAseq transcript tpm data using RSEM. Log2 transformed, using a pseudo-count of 1. - Rows: Omics Profile IDs - Columns: transcripts (HGNC symbol and ensembl transcript ID)
+```{r}
+library(tidyverse)
+```
+
+
+```{r}
+# read in transcript expression data for the coding genes
+coding_rna<- read_csv(file="../input/coding_rna.csv")
+
+# read in latest version of the selected genes
+
+final_gene_list <- read_csv(file = "../output/final_gene_list_2025-05-07.csv")
+
+selected_genes_transcripts<- coding_rna %>% filter(Gene %in% final_gene_list$Gene) %>% droplevels()
+
+length(unique(selected_genes_transcripts$Gene))
+setdiff(final_gene_list$Gene, coding_rna$Gene)
+# three genes are missing because of annotation issue, added them manually
+
+selected_genes_transcripts<- rbind(selected_genes_transcripts, (coding_rna %>% filter(Gene %in% c("H3-3A",  "KRTAP5-7" ,"KRTAP4-2")) %>% droplevels()))
+print(paste("we have transcripts for all",length(unique(selected_genes_transcripts$Gene)),"/" , length(unique(final_gene_list$Gene)), "genes."))
+
+```
+
+```{r}
+if (!requireNamespace("biomaRt", quietly = TRUE)) {
+  install.packages("BiocManager")
+  BiocManager::install("biomaRt")
+}
+library(biomaRt)
+
+ 
+selected_genes_transcripts <- selected_genes_transcripts %>% mutate(Transcript_ID = str_replace_all(Transcript_ID, "\\(|\\)", ""))
+
+
+ensembl=useEnsembl(biomart="genes",dataset="hsapiens_gene_ensembl", version=110)   # dataset and database chosen.
+
+
+transcript_data = getBM(attributes = c('external_gene_name','ensembl_transcript_id','transcript_length','ensembl_gene_id',"transcript_biotype" ),filters = 'ensembl_transcript_id', values = selected_genes_transcripts$Transcript_ID, mart = ensembl)
+transcript_data<- transcript_data %>% rename(Transcript_ID=ensembl_transcript_id)
+names(transcript_data)
+selected_genes_transcripts<-left_join(selected_genes_transcripts, transcript_data,by="Transcript_ID")
+
+summary(as.factor(selected_genes_transcripts$transcript_biotype))
+
+#select only protein coding transcripts
+selected_genes_transcripts<- selected_genes_transcripts %>% filter(transcript_biotype=="protein_coding")
+
+#select highest expression transcript per cell line
+
+melted_tr_data<- reshape2::melt(selected_genes_transcripts,id.vars=c("Gene", "Transcript_ID", "external_gene_name", "ensembl_gene_id", "transcript_biotype","transcript_length"  ))
+levels(melted_tr_data$variable)
+max_exp<- melted_tr_data %>% group_by(Gene, variable) %>% summarise(max=max(value))
+
+melted_tr_data<- left_join(melted_tr_data, max_exp, by=c("Gene", "variable"))
+melted_tr_data<- melted_tr_data %>% mutate(gene_max_tr="none") %>% mutate(gene_max_tr=case_when(
+  value < 1 ~"low",
+  value==max ~ "max",
+  TRUE~"none"
+))  
+
+melted_tr_data<- melted_tr_data %>% filter(gene_max_tr=="max") %>% droplevels()
+
+#check how many genes have zero expression in selected cell lines
+unique_tr <- melted_tr_data %>%
+  dplyr::select(Gene, Transcript_ID) %>%
+  unique()
+
+unique_genes<- as.data.frame(table(melted_tr_data$Gene))
+
+print(paste0("there are ", nrow(unique_tr)," unique protein coding transcripts for ", nrow(unique_genes), " genes with an expression at least one of the selected cell lines")) 
+
+
+
+# select a random transcript for low expression genes
+
+set.seed(87532)
+p<-selected_genes_transcripts %>% filter(Gene %in% setdiff(selected_genes_transcripts$Gene, melted_tr_data$Gene)) %>% group_by(Gene) %>% slice_sample(n=1)
+
+# combine all selected transcripts
+final_transcript_list<- rbind(unique_tr, (p %>% dplyr::select(Gene, Transcript_ID)))
+#check for duplications
+sum(duplicated(final_transcript_list$Transcript_ID))
+view(unique_tr)
+```
+
+
+```{r}
+# get data for selected transcripts
+
+final_selected_transcript_data<- selected_genes_transcripts %>% filter(Transcript_ID %in% final_transcript_list$Transcript_ID) %>% droplevels()
+length(unique(final_selected_transcript_data$Gene))
+
+
+# count how many transcripts per each gene
+
+trancript_count<- as.data.frame(table(final_selected_transcript_data$Gene))
+names(trancript_count)<- c("Gene", "count")
+final_selected_transcript_data<- left_join(final_selected_transcript_data, trancript_count, by="Gene")
+
+write_csv(final_selected_transcript_data, file=paste0("~/sym_101_design/output/final_selected_transcript_data_", Sys.Date(),".csv"))
+
+
+```
+
+```{r}
+protein_coding<- syp_101_final_selected_gRNAs_with_control %>% filter(transcript_biotype=="protein_coding")
+setdiff(protein_coding$Transcript_ID, final_selected_transcript_data$Transcript_ID)
+```
+
+
+```{r}
+sessionInfo()
+```
+

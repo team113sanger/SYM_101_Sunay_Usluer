@@ -1,0 +1,25 @@
+.RData
+.Rhistory
+.Rproj.user
+.Ruserdata
+Figure_5 plotting/data/A549_snhg15-16-myc-tracerx_main_plots.pptx
+sym_101_design/.RData
+sym_101_design/.RDataTmp
+sym_101_design/.RDataTmp1
+sym_101_design/.RDataTmp10
+sym_101_design/.RDataTmp11
+sym_101_design/.RDataTmp9
+sym_101_design/.Rproj.user/4AF4451B/ctx/ctx-16389/environmentTmp
+sym_101_design/Cleaned_up_data/all_melted_data2025-05-07.csv
+sym_101_design/input/all_mRNA_guides.csv
+sym_101_design/input/CRISPRGeneDependency.csv
+sym_101_design/input/CRISPRGeneEffect.csv
+sym_101_design/input/gencode.v19.Cas13d_crRNAs.txt
+sym_101_design/input/OmicsCNGene.csv
+sym_101_design/input/OmicsExpressionProteinCodingGenesTPMLogp1.csv
+*.pptx
+*.docx
+*.png
+*.svg
+*.jpeg
+*.jpg # optional, many JPEGs are .jpg

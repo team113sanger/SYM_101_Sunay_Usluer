@@ -1,0 +1,196 @@
+---
+title: '"LC Lines Cas13d Activity Test"'
+author: "Sunay Usluer"
+date: "2025-03-10"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ggpubr)
+library(ggsci)
+library(svglite)
+library("here")
+library("ggbeeswarm") 
+library(renv)
+```
+
+
+#1: the initial part of the activity testing included a reporter. We derived median GFP expression of GFP+ cells from FACS data 
+```{r}
+three_cell_lines_activity <- read.csv(here("figure_1_plotting/input/three_cell_lines_activity.csv"))
+
+
+# Compute summary statistics (mean and standard error)
+summary_stats <- three_cell_lines_activity %>%
+  group_by(Cell_line) %>%
+  summarise(
+    mean_ratio = mean(Ratio_to_WT, na.rm = TRUE),
+    se_ratio = sd(Ratio_to_WT, na.rm = TRUE) / sqrt(n())  # Standard error
+  )
+
+# Create the plot
+
+  ggplot() +
+  
+  geom_bar(data = summary_stats, aes(y = mean_ratio, x = Cell_line), stat = "identity", 
+           width = 0.5, alpha = 0.8)+   # Bar plot for mean
+  geom_errorbar(data = summary_stats, aes(ymin = mean_ratio - se_ratio, ymax = mean_ratio + se_ratio,x = Cell_line), 
+                width = 0.2, color = "black", ) + 
+    geom_beeswarm(data=three_cell_lines_activity ,aes(y = Ratio_to_WT, x = Cell_line), alpha = 0.6, size = 0.5) + 
+  theme_classic() + 
+  labs(y = "Median GFP\nRatio to WT (%)", x = "Cell Line", title = "Reporter\nAssasy") +
+  theme(text = element_text(size = 8), axis.title.x = element_blank(), legend.position = "NULL", axis.text.x=element_text(angle=90))+
+    ylim(0,100)
+  
+  
+  ggsave(filename =here( "figure_1_plotting/Plots/three_cell_lines_Reporter_test.svg"), 
+       plot = last_plot(), 
+       device = "svg", units = "mm", width = 50, height=50)
+
+```
+
+#2: In the second part of athe analysis, we infected NCIH1299_RfxCas13d polyclonal cell line with guideRNAs targeting 3 surface markers separately. After one week selection we collected cells and stained them with a antobody cocktail against all three surface markers.
+```{r}
+## we picked three surface markers with different level of expression:
+exp_data<- read_csv(file=here("figure_1_plotting/input/combined_data.csv"))
+selected_genes_data<- exp_data %>% dplyr::select(Gene,NCIH1299=NCIH1299_Exp, NCIH1975=NCIH1975_Exp, A549=A549_Exp) %>% filter(Gene %in% c("CD274", "FAS", "CD9")) %>% reshape2::melt()
+
+selected_genes_data %>% ggplot(aes(x=Gene, y=value, fill=variable))+geom_col(position = "dodge")+
+  ylab("Log2(TPM+1)")+
+  theme_minimal()+
+  scale_fill_nejm(name="Cell Line")+
+  ggtitle("Expression of Selected Genes")+
+  theme(title = element_text(size=8), text = element_text(size=8))
+
+ggsave(filename = here("figure_1_plotting/Plots/surface_marker_gene_expression.svg"), 
+       plot = last_plot(), 
+       device = "svg",
+       unit="mm",
+       width = 65, height = 50)
+```
+
+
+```{r}
+flo_data<- read_csv(file=here("figure_1_plotting/input/h1299_3_markers_staining.csv"))
+summary(flo_data)
+
+flo_data <- flo_data %>% 
+  mutate(sample = case_when(
+    grepl("NT", sample) ~ "NT",
+    TRUE ~ sample
+  ))
+
+flo_data_AB_exp1<- flo_data %>% filter((AB!= "IGG" )&(sample!="No")) %>% filter(Exp=="Exp_1")
+
+
+flo_data_NT_mean<- flo_data_AB_exp1 %>% filter(sample=="NT")  %>% group_by(Group, Exp) %>% summarise(mean_NT=mean(Value))
+flo_data_AB_exp1<- left_join(flo_data_AB_exp1, flo_data_NT_mean, by=c("Group", "Exp"))
+flo_data_AB_exp1$ratio_to_NT<- flo_data_AB_exp1$Value/flo_data_AB_exp1$mean_NT
+
+flo_data_AB_exp1$sample <- sub("_gRNA", "", flo_data_AB_exp1$sample)
+
+flo_data_AB_exp1 %>%
+  ggplot(aes(x = sample, y = ratio_to_NT)) +
+  
+  stat_summary(fill="lightgray", color="black",fun = mean, geom = "bar", position = position_dodge()) + # Bar plot with mean
+  stat_summary(fun.data = mean_se, geom = "errorbar", position = position_dodge(width = 0.9), width = 0.3) + # Error bars
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  facet_wrap(~Group) +theme_bw()+
+  geom_point(fill="darkgray", alpha=0.7, size=0.5)+
+  labs(y = "Ratio to Non-targeting Guide") +theme(text = element_text(size=8), axis.text.x=element_text(angle=90), legend.position = "none")+ggtitle("Triple Antibody Staining\nNCIH1299 Cells")+
+ xlab("guideRNA")
+
+ggsave(filename = here("figure_1_plotting/Plots/h1299_triple_staining.svg"), 
+       plot = last_plot(), 
+       device = "svg", units = "mm", width=85, height = 60 )
+  
+```
+
+#3: we infected three cell lines with guides targeting three surface markers. stained them separately
+
+```{r}
+A549_H1975<- read_csv(file=here("figure_1_plotting/input/a549_h1975_ab_staining.csv"))
+nt_data<- A549_H1975 %>% filter(gRNA=="NT") %>% droplevels() %>%group_by(Group,Cells) %>%  summarise(NT_mean=mean(Florescence))
+
+A549_H1975<- left_join(A549_H1975, nt_data, by=c("Group","Cells"))
+A549_H1975$ratio_to_NT<- A549_H1975$Florescence/A549_H1975$NT_mean
+
+A549_H1975 %>% filter(gRNA!="NT") %>% 
+  ggplot(aes(x = gRNA, y = ratio_to_NT)) +
+  stat_summary(aes(fill=Group), color="black",fun = mean, geom = "bar", position = position_dodge()) + # Bar plot with mean
+  stat_summary(fun.data = mean_se, geom = "errorbar", position = position_dodge(width = 0.9), width = 0.1) + # Error bars
+  geom_point(fill="black", color="black", size=1)+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  facet_wrap(~Cells) +theme_minimal()+
+  labs(y = "Ratio to Non-targeting Guide", x="guideRNA") +theme(axis.text.x=element_text(angle=90))+ggtitle("Surface Marker Staining\nNCIH1975 and A549 Cells")+
+  scale_fill_nejm(name="Antibody")
+
+ggsave(filename = here("figure_1_plotting/Plots/A549_NCIH_1975_surface_staining.svg"), 
+       plot = last_plot(), width = 14, height=10, unit="cm",
+       device = "svg")
+```
+
+
+```{r}
+h1299_long_term<- read_csv(file=here("figure_1_plotting/input/H1299_1week_1month.csv"))
+
+
+nt_mean_h1299<- h1299_long_term %>% filter(gRNA=="NT") %>% group_by(Group,`Time (Days)`) %>% summarise(mean_nt=mean(AB_Florescence))
+
+h1299_long_term<- left_join(h1299_long_term, nt_mean_h1299, by=c("Group","Time (Days)"))
+h1299_long_term$ratio_to_NT<- h1299_long_term$AB_Florescence/h1299_long_term$mean_nt
+
+h1299_long_term %>%
+  filter((gRNA != "NT") & (gRNA != "No")) %>%
+  ggplot(aes(x = gRNA, y = ratio_to_NT, fill = as.factor(`Time (Days)`))) +
+  
+  # Bar plot with mean
+  stat_summary(fun = mean, geom = "bar", position = position_dodge(width = 0.9)) +
+  
+  # Error bars
+  stat_summary(fun.data = mean_se, geom = "errorbar",
+               position = position_dodge(width = 0.9), width = 0.3) +
+  
+  # Raw data points, now properly dodged by fill
+  geom_point(
+    aes(fill = as.factor(`Time (Days)`)),
+    position = position_jitterdodge(jitter.width = 0.15, dodge.width = 0.9),
+    shape = 21,
+    color = "black",
+    size = 1
+  ) +
+  
+  # Styling
+  theme_classic() +
+  theme(
+    text = element_text(size = 8),
+    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)
+  ) +
+  facet_wrap(~Group, scales = "free_x") +
+  labs(
+    y = "Ratio to Non-targeting Guide",
+    x = "guideRNA"
+  ) +
+  scale_fill_nejm(name = "DPI") +
+  ggtitle("Long Term Cas13d Activity Test\nNCIH1299 Cells")
+
+ggsave(filename = here("figure_1_plotting/Plots/H1299_long_term.svg"), 
+       plot = last_plot(), 
+       device = "svg",
+       unit="mm",
+       width=85, height = 55)
+
+```
+
+
+```{r}
+sessionInfo()
+
+
+
+```
+

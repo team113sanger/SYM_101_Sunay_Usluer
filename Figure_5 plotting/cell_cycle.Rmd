@@ -1,0 +1,242 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+library(tidyverse)
+library(ggpubr)
+library(readxl)
+```
+
+
+```{r}
+cell_cycle_analysis<- read_xlsx(path="data/cell_cycle_analysis.xlsx")
+melted_data<- cell_cycle_analysis %>% reshape2::melt(id.vars= c("cell_line", "Gene" ,"Guide", "Replicate"))
+
+
+
+Gene_Guide_order <- c("NT_NT", 
+                      "MYC_Guide_1",
+                      "MYC_Guide_2",
+                      "SNHG15_Guide_1",
+                      "SNHG15_Guide_2",
+                      "SNHG15_Guide_3",
+                      "SNHG16_Guide_1",
+                      "SNHG16_Guide_2",
+                      "SNHG16_Guide_3")
+
+
+
+melted_data$Gene_Guide <- interaction(melted_data$Gene, melted_data$Guide, sep = "_")
+melted_data$Gene_Guide <- factor(melted_data$Gene_Guide, levels = Gene_Guide_order)
+
+# draw data for A549 Cell Line
+melted_data %>% filter(cell_line=="A549") %>% droplevels() %>% ggplot( aes(x = Gene_Guide, 
+                        y = value, 
+                        fill = Gene)) +
+  geom_col(position = "dodge") +
+  geom_point(aes(y = value), 
+             position = position_jitter(width = 0.2), 
+             color = "black", size = 2, alpha = 0.7) +
+  facet_wrap(~ variable, scales = "free_y") +
+  labs(x = "Gene + GuideRNA", 
+       y = "Percentage of cells", 
+       fill = "Gene", 
+       title = "Cell Cycle Distribution by Gene and GuideRNA\nA549") +
+  theme_bw() +
+  stat_compare_means(
+    aes(group = Gene_Guide),              # compare by guide
+    label = "p.signif",              # show significance stars
+    method = "t.test",               # or "wilcox.test"
+    ref.group = "NT_NT",                # compare everything to NT
+    hide.ns = FALSE,                   # hide non-significant
+    symnum.args = list(
+    cutpoints = c(0, 0.001, 0.01, 0.05, 1),
+    symbols   = c("***", "**", "*", "ns"))
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  scale_y_continuous(expand = expansion(mult = c(0, 0.2)))
+ggsave(filename = "A549_three_phases_cell_cycle.svg", dpi = 1000, width = 20, height = 10, unit="cm")
+```
+
+
+```{r}
+## for H1299 cell line
+melted_data %>% filter(cell_line=="NCI-H1299")%>% droplevels() %>% ggplot( aes(x = Gene_Guide, 
+                        y = value, 
+                        fill = Gene)) +
+  geom_col(position = "dodge") +
+  geom_point(aes(y = value), 
+             position = position_jitter(width = 0.2), 
+             color = "black", size = 2, alpha = 0.7) +
+  facet_wrap(~ variable, scales = "free_y") +
+  labs(x = "Gene + GuideRNA", 
+       y = "Percentage of cells", 
+       fill = "Gene", 
+       title = "Cell Cycle Distribution by Gene and GuideRNA\nNCI-H1299") +
+  theme_bw() +
+  stat_compare_means(
+    aes(group = Gene_Guide),              # compare by guide
+    label = "p.signif",              # show significance stars
+    method = "t.test",               # or "wilcox.test"
+    ref.group = "NT_NT",                # compare everything to NT
+    hide.ns = FALSE,                   # hide non-significant
+    symnum.args = list(
+    cutpoints = c(0, 0.001, 0.01, 0.05, 1),
+    symbols   = c("***", "**", "*", "ns"))
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  scale_y_continuous(expand = expansion(mult = c(0, 0.2))) 
+
+ggsave(filename = "h1299_three_phases_cell_cycle.svg", dpi = 1000, width = 20, height = 10, unit="cm")
+```
+
+```{r}
+# both cell lines, S phase only
+
+melted_data %>% filter(variable=="S")%>% droplevels() %>% ggplot( aes(x = Gene_Guide, 
+                        y = value, 
+                        fill = Gene)) +
+  geom_col(position = "dodge") +
+  geom_point(aes(y = value), 
+             position = position_jitter(width = 0.2), 
+             color = "black", size = 2, alpha = 0.7) +
+  facet_wrap(~ cell_line) +
+  labs(x = "Gene + GuideRNA", 
+       y = "Percentage of cells", 
+       fill = "Gene", 
+       title = "Percentage of Cells at S Phase") +
+  theme_bw() +
+  stat_compare_means(
+    aes(group = Gene_Guide),              # compare by guide
+    label = "p.signif",              # show significance stars
+    method = "t.test", # or "wilcox.test"
+    method.args = list(var.equal = FALSE),
+    ref.group = "NT_NT",                # compare everything to NT
+    hide.ns = FALSE,                   # hide non-significant
+    symnum.args = list(
+    cutpoints = c(0, 0.001, 0.01, 0.05, 1),
+    symbols   = c("***", "**", "*", "ns"))
+  ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))+
+  scale_y_continuous(expand = expansion(mult = c(0, 0.2))) 
+
+ggsave(filename = "percentage_S_phase.svg", dpi = 1000, width = 20, height = 10, unit="cm")
+```
+
+
+```{r}
+order <- c("G1","S", "G2/M" )
+facet_order <- c("NT", "MYC", "SNHG15", "SNHG16")
+
+summary_plot <- melted_data %>%
+  filter(cell_line == "A549") %>%
+  group_by(Gene, Guide, variable) %>%
+  summarise(
+    mean = mean(value),
+    sd   = sd(value),
+    .groups = "drop"
+  ) %>%
+  group_by(Gene,Guide) %>%
+  mutate(
+    prop = mean / sum(mean) * 100,
+    prop_sd = sd / sum(mean) * 100
+  ) %>%
+  ungroup() %>%
+  # make variable a factor in the desired order
+  mutate(variable = factor(variable, levels = order)) %>%
+  group_by(Gene,Guide) %>%
+  arrange(variable) %>%   # now respects factor order
+  mutate(
+    cumsumValue = cumsum(prop),
+    min=cumsumValue-prop_sd,
+    max=cumsumValue+prop_sd
+  )
+
+
+summary_plot <- summary_plot %>%
+  mutate(variable = factor(variable, levels = c("G2/M","S","G1")), Gene = factor(Gene, levels = facet_order))
+
+summary_plot %>%
+  ggplot(aes(x = Guide, y = prop, fill = variable)) +
+  geom_col() +
+  geom_errorbar(
+    aes(ymin = min, ymax = max),
+    width = 0.2
+  ) +
+  facet_grid(~Gene, scales = "free_x", space="free_x") +
+  ylab("Percentage") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  ggsci::scale_fill_aaas(name="Cell Cycle\nPhase") +
+ ggtitle("Cell Cycle Analysis\nA549")+
+  geom_hline(
+    yintercept = summary_plot %>%
+      filter(Guide == "NT", variable %in% c("G1")) %>%
+      pull(prop),
+    linetype = "dashed")
+
+
+
+
+ggsave(filename = "cell_cycle_triple_A549_new.svg", width=15, height = 10, unit="cm")
+
+```
+
+```{r}
+#for H1299
+summary_plot_2 <- melted_data %>%
+  filter(cell_line == "NCI-H1299") %>%
+  group_by(Gene, Guide, variable) %>%
+  summarise(
+    mean = mean(value),
+    sd   = sd(value),
+    .groups = "drop"
+  ) %>%
+  group_by(Gene,Guide) %>%
+  mutate(
+    prop = mean / sum(mean) * 100,
+    prop_sd = sd / sum(mean) * 100
+  ) %>%
+  ungroup() %>%
+  # make variable a factor in the desired order
+  mutate(variable = factor(variable, levels = order)) %>%
+  group_by(Gene,Guide) %>%
+  arrange(variable) %>%   # now respects factor order
+  mutate(
+    cumsumValue = cumsum(prop),
+    min=cumsumValue-prop_sd,
+    max=cumsumValue+prop_sd
+  )
+
+
+summary_plot_2 <- summary_plot %>%
+  mutate(variable = factor(variable, levels = c("G2/M","S","G1")), Gene = factor(Gene, levels = facet_order))
+
+summary_plot_2 %>%
+  ggplot(aes(x = Guide, y = prop, fill = variable)) +
+  geom_col() +
+  geom_errorbar(
+    aes(ymin = min, ymax = max),
+    width = 0.2
+  ) +
+  facet_grid(~Gene, scales = "free_x", space="free_x") +
+  ylab("Percentage") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  ggsci::scale_fill_aaas() +
+  geom_hline(
+    yintercept = summary_plot_2 %>%
+      filter(Guide == "NT", variable %in% c("G1")) %>%
+      pull(prop),
+    linetype = "dashed")+
+  ggtitle("Cell Cycle Analysis\nNCI-H1299")
+
+
+
+ggsave(filename = "cell_cycle_triple_H1299_new.svg", width=15, height = 10, unit="cm")
+```
+
+
+
