@@ -1,0 +1,524 @@
+---
+title: "R Notebook"
+output:
+  html_document:
+    df_print: paged
+editor_options:
+  chunk_output_type: console
+---
+
+tracerX data are obtained from this paper:
+Martínez-Ruiz, C., Black, J. R., Puttick, C., Hill, M. S., Demeulemeester, J., Larose Cadieux, E., ... & McGranahan, N. (2023). Genomic–transcriptomic evolution in lung cancer and metastasis. Nature, 616(7957), 543-552
+https://doi.org/10.1038/s41586-023-05706-4
+https://www.nature.com/articles/s41586-023-05706-4
+
+deposited in here:
+
+https://zenodo.org/records/7603386 [zenodo.org]
+(downloaded on march, 2024)
+
+please download and transfer these two large files into input folder. the other required files are already downloaded in input.
+2022-10-17_rsem_tpm_mat.fst
+2022-10-18_vst_counts.fst
+
+
+Martinez Ruiz, Carlos <carlos.ruiz.15@ucl.ac.uk> explanation by the first author:
+*you have two files, one with rsem_counts another one with rsem_tpm in the name . These are the expression matrices for raw counts and TPM, respectively.*
+ 
+in the data multiple regions from same tumor is sampled along with normal region within the tumor. thus there are multiple RNA sequencing for tumor sample but only one RNA sample for the normal for each tumor.
+
+
+
+
+```{r, message=FALSE, warning=FALSE}
+
+library("DESeq2")
+library("limma")
+library(fst)
+library(tidyverse)
+library(ggrepel)
+library(biomaRt)
+library(plotly)
+library(ggsci)
+library(ggpubr)
+library(apeglm)
+library(renv)
+
+
+set.seed(3789291)
+```
+
+```{r, message=FALSE, warning=FALSE}
+renv::status()
+renv::snapshot()
+```
+
+```{r}
+theme_sym <- function() {
+  theme_minimal(base_size = 8, base_family = "Arial") +
+    theme(
+      # General plot style
+      plot.title = element_text(face = "bold", size = 9, hjust = 0.5),
+      plot.subtitle = element_text(size = 8, hjust = 0.5),
+      plot.caption = element_text(size = 7, hjust = 1),
+      
+      # Axis text and titles
+      axis.text = element_text(size = 10, color = "black"),
+      axis.title = element_text(size = 10, face = "bold"),
+      axis.line = element_line(color = "black"),
+      axis.ticks = element_line(color = "black"),
+      
+      # Panel and grid lines
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      panel.border = element_blank(),
+      panel.background = element_blank(),
+      
+      # Legend
+      legend.text = element_text(size = 7),
+      legend.title = element_text(size = 8, face = "bold"),
+      legend.key = element_blank(),
+      legend.position = "right",
+      
+      # Facet labels
+      strip.text = element_text(size = 8, face = "bold")
+    )
+}
+
+```
+
+
+#read in and clean data
+```{r,message=FALSE, warning=FALSE}
+samples_metadata<- read_csv(file="output/samples_metat_data_for_downstream_analysis.csv")
+table(samples_metadata$tumour_type)
+#find and select tumors with normal regions sampled 
+normals<- samples_metadata %>% filter(tumour_type=="Normal") %>% droplevels()
+samples<- samples_metadata %>% filter(tumour_id %in% normals$tumour_id) %>% droplevels() %>% unique()
+samples<- samples %>% mutate(condition=ifelse(Histology=="Normal", "Normal", "Tumour"))
+
+#arrange normals followed by tumor samples
+samples<- arrange(samples, region)
+
+#read in raw reads
+read<- read_fst(path = "input/tracerX/2022-10-17_rsem_tpm_mat.fst")
+
+#read in annotation data:
+
+lung_cancer_genes<- readxl::read_xlsx(path = "input/tracerX/Lung_cancer_genes.xlsx")
+cancer_lncrna<-readxl::read_xlsx("input/tracerX/CLC_non_coding_cancer_genes.xlsx", col_names = T, sheet = 2)
+ddr_genes<-readxl::read_xlsx("input/tracerX/BalmusLab_DDR_list.xlsx",col_names = T,sheet = 2)
+pancancer_drivers<- read_csv("input/tracerX/20200401_pancan_drivers.csv")
+follow_up_genes<- read_csv(file="input/sym10X_01_final_oligo_library.csv") %>% dplyr::select(Gene) %>% unique()
+
+
+gene_annotation<- data.frame(Gene_id=read$gene_id)
+gene_annotation<- gene_annotation %>% mutate(lung_cancer_gene=ifelse(Gene_id %in% lung_cancer_genes$GENE, "Anchor_mRNA", "no")) %>% mutate(cancer_lncrna=ifelse(Gene_id %in% cancer_lncrna$`NAME AS PUBLISHED`, "cancer_lncRNA","no")) %>% mutate(DDR_gene=ifelse(Gene_id %in% ddr_genes$Symbol, "DDR", "no"))%>% mutate(Panancer_gene=ifelse(Gene_id %in% pancancer_drivers$gene, "Pan_cancer_driver", "no")) %>%  mutate(follow_up=ifelse(Gene_id %in% follow_up_genes$Gene, "Follow_up", "no"))
+
+
+```
+
+## conduct differential expression analysis with all samples with a normal region sequenced.
+
+```{r,message=FALSE, warning=FALSE}
+#select only reads for selected samples
+gene_exp_raw<- read[,c("gene_id",samples$region)]
+
+# prepare data for DESeq2 analysis
+
+coldata<- samples %>% dplyr::select(region,condition, Histology, tumour_type)
+nrow(coldata)
+rownames(gene_exp_raw)<- gene_exp_raw$gene_id
+gene_exp_raw<- gene_exp_raw %>% dplyr::select(!gene_id)
+
+#check if there are any *NA*'s in raw reads
+sum(is.na(gene_exp_raw))
+# Convert to integers (because DeSEQ2 likes it so)
+gene_exp_raw <- round(gene_exp_raw, 0)
+
+#first check tumor distribution
+
+dds_pca <- DESeqDataSetFromMatrix(countData = gene_exp_raw,
+                              colData = coldata,
+                              design= ~  Histology)
+
+
+vsd <- vst(dds_pca, blind=FALSE)
+
+pcaData <- plotPCA(vsd, intgroup=c("Histology"), returnData=TRUE)
+percentVar <- round(100 * attr(pcaData, "percentVar"))
+ggplot(pcaData, aes(PC1, PC2, color=Histology)) +
+  geom_point(size=3) +
+  xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+  ylab(paste0("PC2: ",percentVar[2],"% variance")) + 
+  coord_fixed()+scale_color_aaas(name="Sample Category")+theme_bw()+ggtitle(paste("TracerX data\nTotal number of patients:", length(unique(samples$patient)),"\nTotal number of samples:", length(samples$region)))
+
+
+dds_pca_2 <- DESeqDataSetFromMatrix(countData = gene_exp_raw,
+                              colData = coldata,
+                              design= ~  tumour_type)
+
+
+vsd_2 <- vst(dds_pca_2, blind=FALSE)
+
+pcaData <- plotPCA(vsd, intgroup=c("tumour_type"), returnData=TRUE)
+percentVar <- round(100 * attr(pcaData, "percentVar"))
+ggplot(pcaData, aes(PC1, PC2, color=tumour_type)) +
+  geom_point(size=3) +
+  xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+  ylab(paste0("PC2: ",percentVar[2],"% variance")) + 
+  coord_fixed()+scale_color_d3(name="Sample Category")+theme_bw()+ggtitle(paste("TracerX data\nTotal number of patients:", length(unique(samples$patient)),"\nTotal number of samples:", length(samples$region)))
+
+#check if there is a difference between tumor and metastases or recurrences (LUAD only)
+
+samples_LUAD_only<- samples %>% filter(Histology=="LUAD") %>% droplevels()
+
+gene_exp_raw_LUAD<- read[,c("gene_id",samples_LUAD_only$region)]
+
+# prepare data for DESeq2 analysis
+
+coldata_LUAD<- samples_LUAD_only %>% dplyr::select(region,condition, Histology, tumour_type)
+nrow(coldata_LUAD)
+rownames(gene_exp_raw_LUAD)<- gene_exp_raw_LUAD$gene_id
+gene_exp_raw_LUAD<- gene_exp_raw_LUAD %>% dplyr::select(!gene_id)
+
+#check if there are any *NA*'s in raw reads
+sum(is.na(gene_exp_raw_LUAD))
+# Convert to integers (because DeSEQ2 likes it so)
+gene_exp_raw_LUAD <- round(gene_exp_raw_LUAD, 0)
+
+
+dds_pca_LUAD<- DESeqDataSetFromMatrix(countData = gene_exp_raw_LUAD,
+                              colData = coldata_LUAD,
+                              design= ~  tumour_type)
+
+
+vsd_LUAD <- vst(dds_pca_LUAD, blind=FALSE)
+
+pcaData <- plotPCA(vsd_LUAD, intgroup=c("tumour_type"), returnData=TRUE)
+percentVar <- round(100 * attr(pcaData, "percentVar"))
+ggplot(pcaData, aes(PC1, PC2, color=tumour_type)) +
+  geom_point(size=3) +
+  xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+  ylab(paste0("PC2: ",percentVar[2],"% variance")) + 
+  coord_fixed()+scale_color_aaas(name="Sample Category")+theme_bw()+ggtitle(paste("TracerX data-LUAD Only\nTotal number of patients:", length(unique(samples_LUAD_only$patient)),"\nTotal number of samples:", length(samples_LUAD_only$region)))
+```
+
+# Run DESeq2 in all samples Tumour vs normal
+```{r,message=FALSE, warning=FALSE}
+# run DESeq2 to compare all tumors to all controls
+dds <- DESeqDataSetFromMatrix(countData = gene_exp_raw,
+                              colData = coldata,
+                              design= ~  condition)
+dds <- DESeq(dds)
+
+```
+
+#get results and annotate data
+
+```{r,message=FALSE, warning=FALSE}
+
+resultsNames(dds) # lists the coefficients
+res <- results(dds, name="condition_Tumour_vs_Normal")
+deseq2_results<-as.data.frame(res)
+deseq2_results$gene_name<- rownames(deseq2_results)
+deseq2_results<- do.call("data.frame", deseq2_results)
+
+
+
+
+
+
+
+write_csv(deseq2_results, file="output/All_tumors_deseq2_results.csv")
+
+deseq2_results<- left_join(deseq2_results, gene_annotation, by=c("gene_name"="Gene_id"))
+
+
+follow_up_deg_all_cancer<- ggplot()+
+  geom_point(data= deseq2_results, aes(x=log2FoldChange, y=-log10(padj)), size=0.5, color="gray" )+
+  geom_point(data= (deseq2_results %>% filter(follow_up !="no")), aes(x=log2FoldChange, y=-log10(padj)), color="red", size=2 )+
+  theme_sym()+
+  ggtitle("DEG Genes in all Tumor Types\nTumor vs Normal")+
+  xlim(-10,10)
+follow_up_deg_all_cancer
+
+
+
+follow_up_deg_focus_all_cancer<- ggplot()+
+  geom_point(data= deseq2_results, aes(x=log2FoldChange, y=-log10(padj)),colour = "gray", size=0.5 )+
+  geom_point(data= (deseq2_results %>% filter(follow_up !="no")), aes(x=log2FoldChange, y=-log10(padj)), color="red", size=2 )+
+  theme_sym()+
+  ggtitle("DEG Genes in all TracerX Samples\nTumor vs Normal")+
+geom_text_repel(data= (deseq2_results %>% filter(follow_up !="no")), aes(x=log2FoldChange, y=-log10(padj), label = gene_name), colour ="black", max.overlaps = 100, size=3)
+
+follow_up_deg_focus_all_cancer
+  
+
+# plot cancer related lncRNAs
+
+deseq2_results %>% filter(cancer_lncrna=="cancer_lncRNA")  %>% ggplot(aes(x=log2FoldChange, y=-log10(padj), color=cancer_lncrna, alpha=cancer_lncrna))+geom_point()+scale_color_manual(values=c("cancer_lncRNA"="red", "no"="darkblue"))+theme_bw()+scale_alpha_manual(values = c("yes"=1, "no"=0.3))+
+  geom_label_repel(data = (deseq2_results %>% filter(cancer_lncrna=="cancer_lncRNA")), inherit.aes = FALSE, color="black", aes(x=log2FoldChange, y=-log10(padj),label=gene_name))+ggtitle(print(paste("lncRNA Genes\n", length(unique(samples$patient)),"patients")))
+
+
+
+
+
+```
+
+
+# DEG analysis by seperating LUAD and LUSC
+
+if the sample variation is homologous within each group, doing a multiple group comparison within itself is good. as can be seen in the PCA plot below, normals from LUAD and LUSC are highly clustered together, so they can be used as control for both groups, which would increase the power.
+
+
+```{r}
+## select tumors with samples from the normal region only
+
+a<- samples %>%  filter(Histology %in% c("LUAD","LUSC")) %>% droplevels() %>% dplyr::select(tumour_id) %>% unique()
+b<- samples %>% filter(Histology=="Normal") %>% droplevels() %>% dplyr::select(tumour_id) %>% unique()
+
+LUAD_LUSC_Samples<- samples %>%  filter(tumour_id %in% intersect(a$tumour_id, b$tumour_id)) %>% droplevels() 
+
+LUAD_LUSC_Samples<- arrange(LUAD_LUSC_Samples, region)
+
+# prepare data for DESeq2 analysis
+
+coldata_2<-LUAD_LUSC_Samples
+coldata_2$Histology<- as.factor(coldata_2$Histology)
+coldata_2$condition<- as.factor(coldata_2$condition)
+coldata_2$region<- as.factor(coldata_2$region)
+
+
+gene_exp_raw_2<- read[,c("gene_id",LUAD_LUSC_Samples$region)]
+rownames(gene_exp_raw_2)<- gene_exp_raw_2$gene_id
+gene_exp_raw_2<- gene_exp_raw_2 %>% dplyr::select(!gene_id)
+
+#check if there are any *NA*'s in raw reads
+sum(is.na(gene_exp_raw_2))
+# Convert to integers (because DeSEQ2 likes it so, read couns from RSEM is estimation thus they are not integers)
+gene_exp_raw_2 <- round(gene_exp_raw_2, 0)
+summary(gene_exp_raw_2)
+
+
+# combine all controls as reference for later comparison
+
+coldata_2$Histology <- relevel(coldata_2$Histology, ref = "Normal")
+
+# run DESeq2 matrix and compare samples according to Histology
+
+dds_luad_lusc_only <- DESeqDataSetFromMatrix(countData = gene_exp_raw_2,
+                              colData = coldata_2,
+                              design= ~  Histology)
+                    
+levels(as.factor(dds_luad_lusc_only$Histology))
+```
+Pre-filtering
+While it is not necessary to pre-filter low count genes before running the DESeq2 functions, there are two reasons which make pre-filtering useful: by removing rows in which there are very few reads, we reduce the memory size of the dds data object, and we increase the speed of count modeling within DESeq2. It can also improve visualizations, as features with no information for differential expression are not plotted in dispersion plots or MA-plots.
+
+Here we perform pre-filtering to keep only rows that have a count of at least 10 for a minimal number of samples. The count of 10 is a reasonable choice for bulk RNA-seq. A recommendation for the minimal number of samples is to specify the smallest group size, e.g. here there are 3 treated samples. If there are not discrete groups, one can use the minimal number of samples where non-zero counts would be considered interesting. One can also omit this step entirely and just rely on the independent filtering procedures available in results(), either IHW or genefilter. See independent filtering section.
+
+```{r}
+smallestGroupSize <- 10 # I randomly selected 10 as the smallest number of samples a gene should have reads above treshold
+keep <- rowSums(counts(dds_luad_lusc_only) >= 10) >= smallestGroupSize
+dds_luad_lusc_only <- dds_luad_lusc_only[keep,]
+
+```
+
+
+
+```{r}
+# run DESeq2 (we don't need to do any normalization because deseq2 conducts its normalization)
+dds_luad_lusc_only <- DESeq(dds_luad_lusc_only)
+
+# check if we have all comparison in the results
+
+resultsNames(dds_luad_lusc_only) # lists the coefficients
+
+## check sample distribution 
+# we need to normalize counts (it is nor correcting for transcript lenght but we don't need it because we do differential expression analysis between normal and tumor)
+
+vsd_luad_lusc_only <- vst(dds_luad_lusc_only, blind=FALSE)
+
+pcaData <- plotPCA(vsd_luad_lusc_only, intgroup=c("condition", "Histology"), returnData=TRUE)
+percentVar <- round(100 * attr(pcaData, "percentVar"))
+ggplot(pcaData, aes(PC1, PC2, color=Histology)) +
+  geom_point(size=3) +
+  xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+  ylab(paste0("PC2: ",percentVar[2],"% variance")) + 
+  coord_fixed()+scale_color_aaas(name="Sample Category")+theme_bw()+ggtitle(print(paste("TracerX data\nTotal number of patients:", length(unique(samples$patient)),"\nTotal number of samples:", length(samples$region))))
+```
+
+# get results
+```{r}
+res_LUAD_vs_Normal <- results(dds_luad_lusc_only, contrast=c("Histology","LUAD", "Normal"), alpha=0.001)
+res_LUSC_vs_Normal <- results(dds_luad_lusc_only, contrast=c("Histology","LUSC", "Normal"), alpha=0.001)
+
+
+
+plotMA(res_LUAD_vs_Normal)
+summary(res_LUAD_vs_Normal)
+plotMA(res_LUSC_vs_Normal)
+summary(res_LUSC_vs_Normal)
+
+
+
+```
+
+## Log fold change shrinkage for visualization and ranking
+Shrinkage of effect size (LFC estimates) is useful for visualization and ranking of genes. To shrink the LFC, we pass the dds object to the function lfcShrink. Below we specify to use the apeglm method for effect size shrinkage (Zhu, Ibrahim, and Love 2018), which improves on the previous estimator.
+
+We provide the dds object and the name or number of the coefficient we want to shrink, where the number refers to the order of the coefficient as it appears in resultsNames(dds).
+
+```{r}
+#LUAD
+res_LUAD_vs_Normal_LFC <- lfcShrink(dds_luad_lusc_only, coef="Histology_LUAD_vs_Normal", type="apeglm")
+res_LUAD_vs_Normal_LFC
+plotMA(res_LUAD_vs_Normal_LFC)
+summary(res_LUAD_vs_Normal_LFC)
+
+# LUSC
+res_LUSC_vs_Normal_LFC <- lfcShrink(dds_luad_lusc_only, coef="Histology_LUSC_vs_Normal", type="apeglm")
+res_LUSC_vs_Normal_LFC
+plotMA(res_LUSC_vs_Normal_LFC)
+summary(res_LUSC_vs_Normal_LFC)
+
+
+```
+
+
+## export results as data frame
+```{r}
+df_res_LUAD_vs_Normal <- as.data.frame(results(dds_luad_lusc_only, name="Histology_LUAD_vs_Normal"))
+df_res_LUSC_vs_Normal <-  as.data.frame(results(dds_luad_lusc_only, name="Histology_LUSC_vs_Normal"))
+
+df_res_LUAD_vs_Normal$Gene_id<- rownames(df_res_LUAD_vs_Normal)
+df_res_LUSC_vs_Normal$Gene_id<- rownames(df_res_LUSC_vs_Normal)
+
+df_res_LUAD_vs_Normal<- left_join(df_res_LUAD_vs_Normal, gene_annotation, by="Gene_id")
+df_res_LUSC_vs_Normal<- left_join(df_res_LUSC_vs_Normal, gene_annotation, by="Gene_id")
+
+write_csv(df_res_LUAD_vs_Normal, file = paste0("output/res_LUAD_vs_Normal_", Sys.Date(), ".csv"))
+write_csv(df_res_LUSC_vs_Normal, file = paste0("output/res_LUSC_vs_Normal_", Sys.Date(), ".csv"))
+
+ ggplot()+geom_point(data = df_res_LUAD_vs_Normal,
+  aes(x=log2FoldChange, y=-log10(padj)), colour = "gray")+
+   geom_point(data = (df_res_LUAD_vs_Normal %>% filter(padj< 0.0001 & abs(log2FoldChange) >1 )),
+  aes(x=log2FoldChange, y=-log10(padj)), colour = "red"
+)+theme_bw()+ggtitle(paste0("TracerX Data, DEG, LUAD_vs_Normal\n",nrow(df_res_LUAD_vs_Normal %>% filter(padj< 0.0001 & abs(log2FoldChange) >1 ))," Genes in Total"))
+ 
+ ggplot()+geom_point(data = df_res_LUSC_vs_Normal,
+  aes(x=log2FoldChange, y=-log10(padj)), colour = "gray")+
+   geom_point(data = (df_res_LUSC_vs_Normal %>% filter(padj< 0.0001 & abs(log2FoldChange) >1 )),
+  aes(x=log2FoldChange, y=-log10(padj)), colour = "red"
+)+theme_bw()+ggtitle(paste0("TracerX Data, DEG, LUSC_vs_Normal\n",nrow(df_res_LUSC_vs_Normal %>% filter(padj< 0.0001 & abs(log2FoldChange) >1 ))," Genes in Total"))
+```
+
+# select and annotate DEGS in LUAD and LUSC
+
+```{r}
+LUAD_DEGs<-  df_res_LUAD_vs_Normal %>% filter(padj< 0.001 & abs(log2FoldChange) >0.5) %>% droplevels()
+LUAD_DEGs <- LUAD_DEGs %>% mutate(regulation= ifelse(log2FoldChange<=-1, "Down", "Up"))
+LUAD_DEGs$sample<- "LUAD"
+
+LUSC_DEGs<-  df_res_LUSC_vs_Normal %>% filter(padj< 0.001 & abs(log2FoldChange) >0.5) %>% droplevels()
+LUSC_DEGs <- LUSC_DEGs %>% mutate(regulation= ifelse(log2FoldChange<=-1, "Down", "Up"))
+LUSC_DEGs$sample<- "LUSC"
+all_DEGs<- rbind(LUAD_DEGs, LUSC_DEGs)
+
+write_csv(all_DEGs, file = paste0("output/all_DEGs_", Sys.Date(), ".csv"))
+
+
+follow_up_deg<- ggplot()+
+  geom_point(data= all_DEGs, aes(x=log2FoldChange, y=-log10(padj)), size=0.5, color="gray" )+
+  geom_point(data= (all_DEGs %>% filter(follow_up !="no")), aes(x=log2FoldChange, y=-log10(padj), color=sample), size=2 )+
+  theme_sym()+
+  theme(legend.position = "none")+
+  ggtitle("DEG Genes in LUAD and LUSC\nTumor vs Normal")+
+  facet_wrap(~sample)+
+  xlim(-10,10)+ggsci::scale_color_nejm(name="Histology")
+follow_up_deg
+
+
+
+follow_up_deg_focus<- ggplot()+
+  geom_point(data= all_DEGs, aes(x=log2FoldChange, y=-log10(padj)),colour = "gray", size=0.1 )+
+  geom_point(data= (all_DEGs %>% filter(follow_up !="no")), aes(x=log2FoldChange, y=-log10(padj), color=sample), size=0.5 )+
+  theme_sym()+
+  ggtitle("DEG Genes in LUAD and LUSC\nTumor vs Normal")+
+  ggsci::scale_color_nejm(name="Histology")+
+geom_text_repel(data= (all_DEGs %>% filter(follow_up !="no")), aes(x=log2FoldChange, y=-log10(padj), label = Gene_id, colour =sample), max.overlaps = 100, size=3)+
+  xlim(-10,10)+
+  ylim(-4, 80)+ facet_grid(~sample)+
+  theme(legend.position = "none")
+
+follow_up_deg_focus
+
+library(svglite)
+ggsave(follow_up_deg, file = "graphs/tracerX/follow_up_deg.svg", height = 10, width = 15, dpi = 1000, units = "cm")
+ggsave(follow_up_deg_focus, file = "graphs/tracerX/follow_up_deg_focus.svg", height = 10, width = 15, dpi = 1000, units = "cm")
+
+follow_up_DEGS<- all_DEGs %>% filter(follow_up !="no") %>% droplevels()
+
+a<- as.data.frame(table(follow_up_DEGS$Gene_id, follow_up_DEGS$regulation)) %>% filter(Freq>0)
+
+
+follow_up_deg_genes<- unique(follow_up_DEGS$Gene_id)
+follow_up_plots<- list()
+
+index<- c(1:length(follow_up_deg_genes))
+for(i in index){
+
+plot_1 <- plotCounts(dds_luad_lusc_only, gene=follow_up_deg_genes[i], intgroup="Histology", returnData=TRUE)
+  p <- ggplot(plot_1, aes(x=Histology, y=count)) +
+    geom_boxplot() +
+    ggtitle(paste("Gene:", follow_up_deg_genes[i]))+theme_sym()+theme(axis.title = element_blank())+stat_compare_means(ref.group = "Normal", label = "p.signif" , label.y.npc = 0.75, color="red")
+  
+  # Add the plot to the list
+  follow_up_plots[[i]] <- p
+  #save plot
+  ggsave(p, file=paste0("graphs/follow_up_degs/",follow_up_deg_genes[i],".svg"))}
+ 
+ 
+
+
+
+a<- ggarrange(plotlist = follow_up_plots[1:6])
+b<-ggarrange(plotlist = follow_up_plots[7:12])
+c<- ggarrange(plotlist = follow_up_plots[13:length(follow_up_plots)])
+snhg15_snhg16 <- ggarrange(
+  plotlist = list(follow_up_plots[[9]], follow_up_plots[[13]])
+)
+
+snhg15_snhg16
+ggsave(snhg15_snhg16, file="graphs/follow_up_degs/snhg15_16.svg", width = 8, height = 5, units = "cm", dpi = 1000)
+
+
+
+
+
+
+```
+
+
+
+
+
+
+
+
+
+(From DESeq2 manual):
+
+Note on p-values set to NA: some values in the results table can be set to NA for one of the following reasons:
+
+If within a row, all samples have zero counts, the baseMean column will be zero, and the log2 fold change estimates, p value and adjusted p value will all be set to NA.
+If a row contains a sample with an extreme count outlier then the p value and adjusted p value will be set to NA. These outlier counts are detected by Cook’s distance. Customization of this outlier filtering and description of functionality for replacement of outlier counts and refitting is described below
+If a row is filtered by automatic independent filtering, for having a low mean normalized count, then only the adjusted p value will be set to NA. Description and customization of independent filtering is described below
+
+`
+
+```{r}
+sessionInfo()
+```
+
