@@ -23,3 +23,15 @@ sym_101_design/input/OmicsExpressionProteinCodingGenesTPMLogp1.csv
 *.svg
 *.jpeg
 *.jpg # optional, many JPEGs are .jpg
+.DS_Store
+
+# Large data files
+sym_101_library_design/input/OmicsCNGene.csv
+sym_101_library_design/input/OmicsExpressionProteinCodingGenesTPMLogp1.csv
+sym_101_library_design/input/CRISPRGeneEffect.csv
+sym_101_library_design/input/CRISPRGeneDependency.csv
+sym_101_library_design/input/all_mRNA_guides.csv
+sym_101_library_design/input/gencode.v19.Cas13d_crRNAs.txt
+
+# R temporary workspace files
+sym_101_library_design/.RDataTmp*
