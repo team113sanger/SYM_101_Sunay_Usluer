@@ -1,0 +1,115 @@
+---
+title: "R Notebook"
+output:
+  html_document:
+    df_print: paged
+---
+
+
+## get and clean gene expression data for lncRNA genes implicated in cancer
+list of lncRNA is from:
+from paper https://www.biorxiv.org/content/10.1101/152769v3.supplementary-material
+also published in Now published in Communications Biology doi: 10.1038/s42003-019-0741-7
+
+```{r}
+library(tidyverse)
+```
+
+```{r}
+
+# read in target genes and reshaped expression data (Depmap 2023Q2)
+nc_genes<- readxl::read_xlsx(path = "../input/CLC_non_coding_cancer_genes.xlsx", col_names = T, sheet = 2)
+
+expression_data<- read_csv(file="../input/target_lines_transcriptome_data.csv")
+
+data<- read_csv(file="../input/OmicsProfiles.csv")
+model<- read_csv(file="../input/Model.csv")
+
+# get the transcript data for selected genes
+
+library(biomaRt)
+
+ensembl=useEnsembl(biomart="genes",dataset="hsapiens_gene_ensembl", version = 110)   # dataset and database chosen.
+
+transcript_data_nc_genes = getBM(attributes = c('external_gene_name','ensembl_transcript_id','transcript_length','ensembl_gene_id',"transcript_biotype" ),filters = 'ensembl_gene_id', values = nc_genes$`GENCODE ID`, mart = ensembl)
+transcript_data_nc_genes<- transcript_data_nc_genes %>% dplyr::rename(Gene=external_gene_name, Transcript_ID=ensembl_transcript_id)
+write_csv(transcript_data_nc_genes, file=paste0("../output/trancript_data_lncRNA_genes_", Sys.Date(),".csv"))
+
+target_cell_lines_data<- data %>% filter(ProfileID %in% names(expression_data))
+
+column_names<- left_join(target_cell_lines_data, model, by="ModelID")
+
+expression_data <- expression_data %>% mutate(Transcript_ID = str_replace_all(Data_name, "\\(|\\)", "")) %>% separate(Transcript_ID, into=c("Gene", "Transcript_ID")) %>% dplyr::select(!Data_name)
+nc_RNA_expression_data<- expression_data %>% filter(Transcript_ID %in% transcript_data_nc_genes$Transcript_ID)
+length(unique(nc_RNA_expression_data$Gene))
+
+colnames<- as.data.frame(names(nc_RNA_expression_data))
+colnames
+names(colnames)[1]<-"ProfileID"
+colnames<- left_join(colnames, column_names, by="ProfileID")
+colnames<- colnames[1:10,]
+colnames(nc_RNA_expression_data)[1:10]<-colnames$StrippedCellLineName
+
+
+```
+
+## select abundant transcripts
+```{r}
+
+combined_transcript_data<- inner_join(nc_RNA_expression_data,transcript_data_nc_genes, by=c("Transcript_ID","Gene"))
+
+b<- as.data.frame(table(combined_transcript_data$Gene, combined_transcript_data$transcript_biotype)) %>% filter(Freq>0)
+
+levels(as.factor(combined_transcript_data$transcript_biotype))
+
+combined_transcript_data<- combined_transcript_data %>% filter(transcript_biotype %in% c("lncRNA","protein_coding" ,"protein_coding", "misc_RNA","processed_transcript", "TEC")) 
+
+print(paste("we have both transcript and expression data for",length(unique(combined_transcript_data$Gene)),"/",nrow(nc_genes), "lncRNA genes. "))
+```
+
+```{r}
+
+#find transcripts with the highest expression in selected cell lines
+names(combined_transcript_data)
+
+melted_transcript_data<- reshape2::melt(combined_transcript_data,id.vars=c("Gene", "Transcript_ID", "ensembl_gene_id", "transcript_biotype","transcript_length"  ))
+levels(melted_transcript_data$variable)
+max_exp<- melted_transcript_data%>% group_by(Gene, variable) %>% summarise(max=max(value))
+
+melted_transcript_data<- left_join(melted_transcript_data, max_exp, by=c("Gene", "variable"))
+melted_transcript_data<-melted_transcript_data %>% mutate(gene_max_tr="none") %>% mutate(gene_max_tr=case_when(
+  value <1 ~"low",
+  value==max ~ "max",
+  TRUE~"none"
+))  
+
+max_exp_melted_transcript_data<-melted_transcript_data %>% filter(gene_max_tr=="max") %>% droplevels()
+max_exp_melted_transcript_data$selection_criteria<- "max_exp"
+
+length(unique(max_exp_melted_transcript_data$Gene))
+
+#select the longest transcript for the unexpressed genes
+unexpressed_genes<- melted_transcript_data %>% filter(!(Gene %in% max_exp_melted_transcript_data$Gene))
+unexpressed_genes<-unexpressed_genes  %>%
+  group_by(Gene) %>%
+  mutate(max_transcript_length = max(transcript_length)) %>%
+  ungroup()
+unexpressed_genes<- unexpressed_genes %>% filter(transcript_length==max_transcript_length)
+unexpressed_genes$selection_criteria<- "max_length"
+
+
+#combine together expressed and unexpressed genes
+selected_lncRNA_transcripts<- rbind((max_exp_melted_transcript_data %>% dplyr::select(Gene, Transcript_ID, transcript_length, transcript_biotype, selection_criteria, ensembl_gene_id)),(unexpressed_genes %>% dplyr::select(Gene, Transcript_ID, transcript_length, transcript_biotype, selection_criteria, ensembl_gene_id))) %>% unique()
+
+
+print(paste("I identified transcripts with maximum expression for different cell lines for", length(unique(max_exp_melted_transcript_data$Gene)),"genes and obtained a total of", length(unique(max_exp_melted_transcript_data$Transcript_ID)), "transcripts. For remaining", length(unique(unexpressed_genes$Gene)), "genes I picked the longest transcript. In the final list I obtained", nrow(selected_lncRNA_transcripts), "transcripts for", length(unique(selected_lncRNA_transcripts$Gene)),"/", nrow(nc_genes), "cancer related lncRNA genes"))
+
+write_csv(selected_lncRNA_transcripts, file=paste0("../output/selected_lncRNA_transcripts_",Sys.Date(), ".csv"))
+
+```
+##End of analysis
+```{r}
+sessionInfo()
+
+```
+

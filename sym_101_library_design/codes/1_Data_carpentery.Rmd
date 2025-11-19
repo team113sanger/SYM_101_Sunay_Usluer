@@ -1,0 +1,253 @@
+---
+title: "Symp_101"
+author: "Sunay"
+date: "2023-06-02"
+output: html_document
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+## Symp_101 Library Gene Pickup
+
+Symp_101 is the single guide library to measure the Cas13d efficiency. we will pick up genes with different essentially, expression and copy number and pick guideRNAs against them.
+The first batch of Work Package 1 consist of 10 Lung cancer lines. but for the initial optimization we picked 3 cell lines= A549, NCIH1299, NCIH1975.
+below I will filter all data initially for the 10 cell lines selected for WP1, but all the downstream analyses will focus only three selected lines.
+
+I obtained all data from DepMap (2023Q2)
+https://depmap.org/portal/data_page/?tab=allData
+files:
+OmicsCNGene.csv
+OmicsExpressionProteinCodingGenesTPMLogp1.csv
+CRISPRGeneEffect.csv
+CRISPRGeneDependency.csv
+
+cleaned-up data first
+```{r}
+library(tidyverse)
+library(reshape2)
+library(ggpubr)
+library(here)
+set.seed(427)
+```
+## filter target cell lines
+
+```{r}
+target_lines<- read.csv(file="../input/symp_1st_batch.txt")
+target_lines
+model<- read.csv(file="../input/Model.csv")
+model_selected<- model %>% filter(StrippedCellLineName %in% target_lines$cell_line) %>% droplevels()
+```
+
+
+
+
+
+```{r}
+gene_effect<- read_csv(file = "../input/CRISPRGeneEffect.csv")
+head(names(gene_effect))
+m<- names(gene_effect)
+m <- gsub(x = m, pattern = "\\s", replacement = "_")
+m<- gsub(x = m, pattern="\\(|\\)", replacement="")
+names(gene_effect)<-m
+head(names(gene_effect))
+filtered_gene_effect<- gene_effect %>% filter(ModelID %in% model_selected$ModelID) %>% droplevels()
+random_gene_effect<- sample_n(gene_effect, 10)
+
+
+filtered_gene_effect<- do.call(data.frame, filtered_gene_effect)
+random_gene_effect<- do.call(data.frame, random_gene_effect)
+combined_gene_effect<-rbind(filtered_gene_effect, random_gene_effect)
+melted_combined_gene_effect<-melt(combined_gene_effect)
+melted_combined_gene_effect<- melted_combined_gene_effect %>% separate(variable, into=c("Gene", "Gene_ID"), sep="_")
+melted_combined_gene_effect$Data<- "Crs"
+
+gene_effect_long <- setNames(data.frame(t(combined_gene_effect[ , - 1])), combined_gene_effect[ , 1])
+gene_effect_long$Gene<- rownames(gene_effect_long )
+gene_effect_long<- gene_effect_long %>% separate(Gene, into=c("Gene", "Gene_ID"), sep="_")
+head(gene_effect_long)
+
+write_csv(melted_combined_gene_effect, file=paste0("../Cleaned_up_data/melted_combined_gene_effect", Sys.Date(),".csv"))
+write_csv(gene_effect_long, file="../Cleaned_up_data/target_random_lines_gene_effect.csv")
+
+
+
+```
+### Gene expression
+Gene expression TPM values of the protein coding genes for DepMap cell lines. Values are inferred from RNA-seq data using the RSEM tool and are reported after log2 transformation, using a pseudo-count of 1; log2(TPM+1).
+
+```{r}
+gene_expression<- read_csv(file="../input/OmicsExpressionProteinCodingGenesTPMLogp1.csv")
+
+head(names(gene_expression))
+m<- names(gene_expression)
+m <- gsub(x = m, pattern = "\\s", replacement = "_")
+m<- gsub(x = m, pattern="\\(|\\)", replacement="")
+names(gene_expression)<-m
+names(gene_expression)[1]<- c("ModelID")
+
+gene_expression<- do.call(data.frame, gene_expression)
+combined_gene_expression<- gene_expression %>% filter(ModelID %in% melted_combined_gene_effect$ModelID) %>% droplevels()
+melted_combined_gene_expression<-melt(combined_gene_expression)
+melted_combined_gene_expression<- melted_combined_gene_expression %>% separate(variable, into=c("Gene", "Gene_ID"), sep="_")
+melted_combined_gene_expression$Data<- "Exp"
+
+
+gene_expression_long <- setNames(data.frame(t(combined_gene_expression[ , - 1])), combined_gene_expression[ , 1])
+gene_expression_long$Gene<- rownames(gene_expression_long )
+gene_expression_long<- gene_expression_long %>% separate(Gene, into=c("Gene", "Gene_ID"), sep="_")
+head(gene_expression_long)
+
+write_csv(melted_combined_gene_expression, file=paste0("../Cleaned_up_data/melted_combined_gene_expression", Sys.Date(),".csv"))
+write_csv(gene_expression_long, file="../Cleaned_up_data/target_random_lines_gene_expression.csv")
+
+```
+
+
+## gene copy number
+explanation from depmap 
+(Gene-level copy number data that is log2 transformed with a pseudo-count of 1; log2(CN ratio + 1) . Inferred from WGS, WES or SNP array depending on the availability of the data type. Values are calculated by mapping genes onto the segment level calls and computing a weighted average along the genomic coordinate.)
+```{r}
+gene_copy<- read_csv(file="../input/OmicsCNGene.csv")
+
+head(names(gene_copy))
+m<- names(gene_copy)
+
+m <- gsub(x = m, pattern = "\\s", replacement = "_")
+m<- gsub(x = m, pattern="\\(|\\)", replacement="")
+names(gene_copy)<-m
+names(gene_copy)[1]<- c("ModelID")
+gene_copy<- do.call(data.frame, gene_copy)
+combined_gene_copy<- gene_copy %>% filter(ModelID %in% melted_combined_gene_effect$ModelID) %>% droplevels()
+melted_combined_gene_copy<-melt(combined_gene_copy)
+melted_combined_gene_copy<- melted_combined_gene_copy %>% separate(variable, into=c("Gene", "Gene_ID"), sep="_")
+melted_combined_gene_copy$Data<- "Copy"
+
+
+gene_copy_long <- setNames(data.frame(t(combined_gene_copy[ , - 1])), combined_gene_copy[ , 1])
+gene_copy_long$Gene<- rownames(gene_copy_long )
+gene_copy_long<- gene_copy_long %>% separate(Gene, into=c("Gene", "Gene_ID"), sep="_")
+head(gene_copy_long)
+
+write_csv(melted_combined_gene_copy, file=paste0("../Cleaned_up_data/melted_combined_gene_copy",Sys.Date(),".csv"))
+write_csv(gene_copy_long, file="../Cleaned_up_data/target_random_lines_gene_copy.csv")
+
+```
+
+### compare gene effect and gene dependency
+Post-Chronos Gene dependency probability estimates for all models in the integrated gene effect. - Columns: Gene - Rows: ModelID
+
+```{r}
+gene_dep<- read_csv(file="../input/CRISPRGeneDependency.csv")
+n<- names(gene_dep)
+head(n)
+n <- gsub(x = n, pattern = "\\s", replacement = "_")
+n<- gsub(x = n, pattern="\\(|\\)", replacement="")
+head(n)
+names(gene_dep)<-n
+gene_dep<- do.call(data.frame,gene_dep)
+combined_gene_dep<- gene_dep %>% filter(ModelID %in% melted_combined_gene_effect$ModelID) %>% droplevels()
+melted_combined_gene_dep<-melt(combined_gene_dep)
+melted_combined_gene_dep<- melted_combined_gene_dep %>% separate(variable, into=c("Gene", "Gene_ID"), sep="_")
+melted_combined_gene_dep$Data<- "Dep"
+
+
+
+gene_dep_long <- setNames(data.frame(t(combined_gene_dep[ , - 1])), combined_gene_dep[ , 1])
+gene_dep_long$Gene<- rownames(gene_dep_long)
+gene_dep_long<- gene_dep_long %>%  separate(Gene, into=c("Gene", "Gene_ID"), sep="_")
+
+write_csv(melted_combined_gene_dep, file="../Cleaned_up_data/melted_combined_gene_dep.csv")
+write_csv(gene_dep_long, file="../Cleaned_up_data/target_random_lines_gene_dep.csv")
+
+
+
+```
+
+### Put together all data for selected cell lines and annotate
+essential and non essential genes are Hart essentials
+
+```{r}
+
+all_data<- rbind(melted_combined_gene_effect, melted_combined_gene_expression, melted_combined_gene_copy, melted_combined_gene_dep)
+
+ceg_neg<- read_tsv(file="../input/CEG_NEG.txt")
+names(ceg_neg)<- c("Gene", "func")
+
+all_data <- left_join(all_data, ceg_neg, by="Gene")
+names(all_data)
+all_data<-all_data %>% mutate(Func= case_when(
+  is.na(func) ~ "Other",
+  TRUE ~ as.character(func)))
+selected_model_data<- model %>% select(ModelID, StrippedCellLineName, CCLEName, contains("Onco"))
+all_data<-left_join(all_data, selected_model_data, by="ModelID")
+
+names(all_data)
+summary(all_data)
+
+all_data<-all_data %>%  mutate(model_type="Target") %>% mutate(model_type=case_when(
+  OncotreePrimaryDisease!="Non-Small Cell Lung Cancer" ~"Random",
+  TRUE ~ as.character(model_type)))
+all_data<- do.call(data.frame,all_data)
+
+write_csv(all_data, file=paste0("../Cleaned_up_data/all_melted_data", Sys.Date(),".csv"))
+
+plot_1<- all_data %>% filter(Data=="Crs") %>% filter(model_type=="Target") %>% ggplot(aes(x=StrippedCellLineName,y=value ))+geom_boxplot(color="red",fill="Pink")+theme_bw()+ylab("Gene_Effect")+theme(axis.text.x = element_text(angle=90))+ggtitle("Target")
+plot_2<- all_data %>% filter(Data=="Crs") %>% filter(model_type=="Random") %>% ggplot(aes(x=StrippedCellLineName,y=value))+geom_boxplot(color="DarkBlue",fill="LightBlue")+theme_bw()+ylab("Gene_Effect")+theme(axis.text.x = element_text(angle=90),axis.title.y = element_blank())+ggtitle("Random")
+ggarrange(plot_1,plot_2)
+
+plot_3<- all_data %>% filter(Data=="Exp") %>% filter(model_type=="Target") %>% ggplot(aes(x=StrippedCellLineName,y=value ))+geom_boxplot(color="red",fill="Pink")+theme_bw()+ylab("Log2(TPM")+theme(axis.text.x = element_text(angle=90))+ggtitle("Target")
+
+plot_4<- all_data %>% filter(Data=="Exp") %>% filter(model_type=="Random") %>% ggplot(aes(x=StrippedCellLineName,y=value))+geom_boxplot(color="DarkBlue",fill="LightBlue")+theme_bw()+ylab("Log2(TPM")+theme(axis.text.x = element_text(angle=90),axis.title.y = element_blank())+ggtitle("Random")
+ggarrange(plot_3,plot_4)
+
+plot_5<- all_data %>% filter(Data=="Copy") %>% filter(model_type=="Target") %>% ggplot(aes(x=StrippedCellLineName,y=value ))+geom_boxplot(color="red",fill="Pink")+theme_bw()+ylab("log2(Copy number)")+theme(axis.text.x = element_text(angle=90))+ggtitle("Target")
+
+plot_6<- all_data %>% filter(Data=="Copy") %>% filter(model_type=="Random") %>% ggplot(aes(x=StrippedCellLineName,y=value))+geom_boxplot(color="DarkBlue",fill="LightBlue")+theme_bw()+ylab("Copy Number")+theme(axis.text.x = element_text(angle=90),axis.title.y = element_blank())+ggtitle("Random")
+ggarrange(plot_5,plot_6)
+
+plot_7<- all_data %>% filter(Data=="Dep") %>% filter(model_type=="Target") %>% ggplot(aes(x=StrippedCellLineName,y=value ))+geom_boxplot(color="red",fill="Pink")+theme_bw()+ylab("Gene Dependency")+theme(axis.text.x = element_text(angle=90))+ggtitle("Target")
+plot_8<- all_data %>% filter(Data=="Dep") %>% filter(model_type=="Random") %>% ggplot(aes(x=StrippedCellLineName,y=value))+geom_boxplot(color="DarkBlue",fill="LightBlue")+theme_bw()+theme(axis.text.x = element_text(angle=90),axis.title.y = element_blank())+ggtitle("Random")
+ggarrange(plot_7,plot_8)
+
+```
+
+combine data for initial 3 cell lines (A549, NCIH1299 and NCIH1975 )
+```{r}
+# Select relevant columns from each dataset
+exp <- gene_expression_long %>% select(Gene, NCIH1299_Exp = "ACH-000510", NCIH1975_Exp = "ACH-000587", A549_Exp = "ACH-000681")
+eff <- gene_effect_long %>% select(Gene, NCIH1299_Crs = "ACH-000510", NCIH1975_Crs = "ACH-000587", A549_Crs = "ACH-000681")
+copy <- gene_copy_long %>% select(Gene, NCIH1299_Copy = "ACH-000510", NCIH1975_Copy = "ACH-000587", A549_Copy = "ACH-000681")
+dep <- gene_dep_long %>% select(Gene, NCIH1299_dep = "ACH-000510", NCIH1975_dep = "ACH-000587", A549_dep = "ACH-000681")
+
+# Summary of expression data
+summary(exp)
+
+# Merge all datasets sequentially
+all_data_target <- list(exp, eff, copy, dep) %>%
+  reduce(inner_join, by = "Gene") %>%
+  left_join(ceg_neg, by = "Gene")
+
+all_data_target<- all_data_target %>% mutate(func= case_when(
+  is.na(func) ~ "Other",
+  TRUE ~ as.character(func)))
+head(all_data_target)
+all_data_target<-do.call(data.frame,all_data_target)
+
+## save all target data
+write_csv(all_data_target, file=paste0("../Cleaned_up_data/all_data_target_", Sys.Date(),".csv"))
+write_csv(exp, file=paste0("../Cleaned_up_data/exp_data_target_", Sys.Date(),".csv"))
+write_csv(eff, file=paste0("../Cleaned_up_data/crispr_data_target_", Sys.Date(),".csv"))
+write_csv(copy, file=paste0("../Cleaned_up_data/copy_data_target_", Sys.Date(),".csv"))
+write_csv(dep, file=paste0("../Cleaned_up_data/dependency_data_target_", Sys.Date(),".csv"))
+
+```
+
+```{r}
+sessionInfo()
+```
+
