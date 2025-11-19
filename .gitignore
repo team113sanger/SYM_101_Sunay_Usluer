@@ -90,3 +90,5 @@ large_files.txt
 ./.git/objects/13/2fad75ed2bfba0f88cd4b2f812596c14bbc86a
 ./tracer_x_analyses/input/tracerX/2022-10-18_vst_counts.fst
 tracer_x_analyses/input/tracerX/2022-10-18_vst_counts.fst
+./tracer_x_analyses/input/tracerX/2022-10-17_rsem_tpm_mat.fst
+tracer_x_analyses/input/tracerX/2022-10-17_rsem_tpm_mat.fst
