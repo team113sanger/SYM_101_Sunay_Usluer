@@ -1,0 +1,31 @@
+#!/bin/bash
+
+# 1️⃣ Find all files >50MB and save to a temp list
+find . -type f -size +50M > large_files.txt
+
+# 2️⃣ Add large files to .gitignore
+while IFS= read -r file; do
+    # Avoid adding duplicates
+    if ! grep -Fxq "$file" .gitignore; then
+        echo "$file" >> .gitignore
+    fi
+done < large_files.txt
+
+# Add large_files.txt itself to gitignore
+if ! grep -Fxq "large_files.txt" .gitignore; then
+    echo "large_files.txt" >> .gitignore
+fi
+
+# 3️⃣ Remove large files from Git index (only if they exist)
+while IFS= read -r file; do
+    if [ -f "$file" ] || [ -d "$file" ]; then
+        git rm --cached "$file"
+    fi
+done < large_files.txt
+
+# 4️⃣ Add and commit the updated .gitignore
+git add .gitignore
+git commit -m "Ignore all files larger than 50MB and remove from Git tracking"
+
+# Done
+echo "✅ All large files >50MB are now ignored and untracked."

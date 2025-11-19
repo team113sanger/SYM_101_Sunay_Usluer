@@ -1,0 +1,7 @@
+sym_101_library_design/input/all_mRNA_guides.csv
+sym_101_library_design/input/CRISPRGeneDependency.csv
+sym_101_library_design/input/CRISPRGeneEffect.csv
+sym_101_library_design/input/gencode.v19.Cas13d_crRNAs.txt
+sym_101_library_design/input/human_non_coding_gRNAs/cancer_lncRNA_guides.csv
+sym_101_library_design/input/OmicsCNGene.csv
+sym_101_library_design/input/OmicsExpressionProteinCodingGenesTPMLogp1.csv
