@@ -88,3 +88,5 @@ large_files.txt
 ./.git/objects/cc/b81348071e4dad46546b47db718c2ebbe972af
 ./.git/objects/e0/c6cd661a6921bf87d5777739e11a12276d0274
 ./.git/objects/13/2fad75ed2bfba0f88cd4b2f812596c14bbc86a
+./tracer_x_analyses/input/tracerX/2022-10-18_vst_counts.fst
+tracer_x_analyses/input/tracerX/2022-10-18_vst_counts.fst
