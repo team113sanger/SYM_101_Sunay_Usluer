@@ -1,0 +1,125 @@
+---
+title: "Figure_4_follow_up_genes_plotting"
+author: "Sunay Usluer"
+date: "2025-05-08"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r}
+library(tidyverse)
+
+```
+#data cleaning
+```{r}
+
+## combine screen data with gene expression data
+
+Selected_genes_for_follow_up <-read.csv("Selected_genes_for_follow_up_2.csv") %>% dplyr::select(1:6)
+target_lines_transcriptome_data <- read.csv("../sym_101_library_design/input/target_lines_transcriptome_data.csv", header=TRUE)
+Model <- read.csv("../sym_101_library_design/input/Model.csv", header = TRUE)
+OmicsProfiles <- read.csv("../sym_101_library_design/input/OmicsProfiles.csv", header = TRUE)
+
+
+Selected_genes_for_follow_up <- Selected_genes_for_follow_up %>%
+  group_by(Gene) %>%
+  mutate(
+    gene_label = if (n() == 1) Gene else paste0(Gene, "_TR", row_number())
+  ) %>%
+  ungroup()
+
+Selected_genes_for_follow_up<-Selected_genes_for_follow_up %>% reshape2::melt(id.vars=c("Gene", "Transcript_ID","transcript_biotype", "gene_label")) %>% dplyr::rename(Cell_Line=variable, Cas13d_score=value)
+
+
+
+Selected_genes_for_follow_up$Cell_Line <- gsub("_Cas13_LFC", "", Selected_genes_for_follow_up$Cell_Line)
+Selected_genes_for_follow_up$Cell_Line <- gsub("H1299", "NCIH1299", Selected_genes_for_follow_up$Cell_Line)
+Selected_genes_for_follow_up$Cell_Line <- gsub("H1975", "NCIH1975", Selected_genes_for_follow_up$Cell_Line)
+
+target_lines<- left_join((Model %>% filter(StrippedCellLineName %in% c("A549", "NCIH1299", "NCIH1975")) %>% select(StrippedCellLineName,ModelID)), (OmicsProfiles %>% filter(Datatype=="rna")), by="ModelID")
+target_lines$ProfileID <- gsub("-", ".", target_lines$ProfileID)
+
+
+x3_lines_transcriptome<- target_lines_transcriptome_data %>% select(Data_name, target_lines$ProfileID)
+
+x3_lines_transcriptome<- x3_lines_transcriptome %>% dplyr::rename(
+  NCIH1299=PR.Er9ReY,
+
+NCIH1975=PR.dmYRK0,
+A549=PR.Em6pVT) %>% reshape2::melt() %>% dplyr::rename(Cell_Line=variable, transcript_expresiion=value)
+
+x3_lines_transcriptome <- x3_lines_transcriptome %>%
+  mutate(Data_name = gsub("[()]", "", Data_name)) %>%
+  separate(Data_name, into = c("Gene", "Transcript_ID"), sep = "_")
+
+follow_up_genes_tr_data<- (left_join(Selected_genes_for_follow_up, x3_lines_transcriptome, by=c("Gene", "Transcript_ID", "Cell_Line") ))
+
+
+follow_up_genes_tr_data[is.na(follow_up_genes_tr_data)] <- 0
+
+mean_expression<- follow_up_genes_tr_data %>% filter(transcript_biotype=="LncRNA") %>% group_by(Cell_Line,Gene, Transcript_ID) %>% 
+
+summarise(mean_expression=mean(transcript_expresiion))
+
+
+```
+# Plotting
+```{r}
+
+library(forcats)
+library("ggnewscale")
+
+
+# Step 1: Arrange the data frame by transcript expression
+df <- follow_up_genes_tr_data %>%
+  arrange(transcript_expresiion)
+
+# Step 2: Set gene_label as a factor with levels in arranged order
+df$gene_label <- factor(df$gene_label, levels = unique(df$gene_label))
+
+# Now plot as before
+p_main <-ggplot(df, aes(x = Cell_Line, y = gene_label)) +
+  geom_point(aes(size = -Cas13d_score, color = transcript_expresiion)) +
+  scale_color_gradient(high = "red", low = "blue",
+                        name = "Gene Expression\n(Log2(TPM+1) )") +
+  scale_size( name = "Cas13d Score") +
+  theme_minimal() +
+  labs(x = "Cell Line", y = "Gene") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        text=element_text(size=6), axis.title = element_blank())
+
+p_main
+
+
+
+# Strip plot for gene biotype
+p_strip <- ggplot(df, aes(x = 1, y = gene_label, fill = transcript_biotype)) +
+  geom_tile() +
+  scale_fill_brewer(palette = "Set2", name = "Gene Biotype") +
+  theme_void() +
+  theme(
+    legend.position = "left",
+    plot.margin = margin(0, 0, 0, 0),
+    axis.text.y = element_blank(),
+    axis.ticks = element_blank(),
+    text=element_text(size=6)
+  )
+
+
+
+# Combine with cowplot or patchwork
+
+library(patchwork)
+
+# Side-by-side: biotype strip + main dot plot
+plot<- p_strip + p_main + plot_layout(widths = c(0.05, 1))+ggtitle("Follow-up Genes\nGene Expression and Cas13d Score")
+
+plot
+library(svglite)
+
+ggsave(filename = "follow_up_genes_data.svg", width = 15, height = 15,unit="cm", dpi=1000)
+
+```
+
