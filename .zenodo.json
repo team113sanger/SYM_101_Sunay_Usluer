@@ -1,0 +1,19 @@
+{
+  "title": "SYM_101_Sunay_Usluer: Symphony library design, Cas13d activity tests and TRACERx analyses",
+  "description": "Symphony library design code, pre-screen Cas13d activity tests, TRACERx tumour versus normal differential expression analysis, and CellTrace and cell cycle assay analyses. Sub-analysis of the manuscript \"Uncovering RNA Dependencies in Lung Cancer through CRISPR-Cas13d Functional Genomics\".",
+  "upload_type": "software",
+  "license": "agpl-3.0-only",
+  "creators": [
+    {
+      "name": "Usluer, Sunay",
+      "affiliation": "Wellcome Sanger Institute, Cambridge, UK"
+    }
+  ],
+  "keywords": [
+    "CRISPR-Cas13d",
+    "library design",
+    "TRACERx",
+    "cell cycle",
+    "lung cancer"
+  ]
+}
